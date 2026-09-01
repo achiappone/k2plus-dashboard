@@ -41,6 +41,8 @@ R = [
   '  <code>git clone https://github.com/achiappone/k2plus-dashboard\n'
   'cd k2plus-dashboard\n'
   'PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>\n'
+  '  <p><button id="grant" class="grantbtn">Connect to my printer</button>\n'
+  '     <span class="permstate" id="permstate"></span></p>\n'
   '  <p id="diag" class="diag">checking&hellip;</p>\n'
   '  <p style="margin:0;font-size:12.5px;color:var(--text-muted)">Using\n'
   '  <span class="mono" id="proxyaddr"></span>. Different host or port?\n'
@@ -49,10 +51,6 @@ R = [
   '<div class="grid">'),
  ('async function tick(){\n  try{',
   'async function tick(){\n  try{\n    document.getElementById("setup").classList.add("ok");'),
- ('    el("statetx").textContent="unreachable";\n    el("state").style.color="var(--crit)";',
-  '    el("statetx").textContent="proxy not running";\n'
-  '    el("state").style.color="var(--crit)";\n'
-  '    document.getElementById("setup").classList.remove("ok");'),
  ('buildTable(); buildSparks(); tick(); tickTemps();',
   'el("proxyaddr").textContent = PROXY;\n'
   'el("setproxy").onclick = e => { e.preventDefault();\n'
@@ -91,6 +89,9 @@ except Exception:
     sha = "?"
 stamp = f"{sha} · {datetime.datetime.now(datetime.timezone.utc):%d %b %H:%M} UTC"
 assert "__BUILD__" in page, "build stamp placeholder missing"
+# elements the hosted page's own code reaches for must actually exist in it
+for eid in ("grant", "permstate", "diag", "setup", "proxyaddr"):
+    assert f'id="{eid}"' in page, f"hosted page references #{eid} but never renders it"
 page = page.replace("__BUILD__", stamp)
 
 out = pathlib.Path("docs/index.html")

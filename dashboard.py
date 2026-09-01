@@ -706,8 +706,13 @@ async function tick(){
     el("statetx").textContent = st + (dev?" · temp off target":"");
     el("state").style.color = statusColor(st, dev);
   }catch(e){
-    el("statetx").textContent="unreachable";
+    lastErr = (e && e.message) ? e.message : String(e);
+    if(++misses < MISSES_BEFORE_DISCONNECTED) return;   // one blip is not a fault
+    el("statetx").textContent="proxy not running";
     el("state").style.color="var(--crit)";
+    const sp = document.getElementById("setup");
+    if(sp) sp.classList.remove("ok");
+    if(misses === MISSES_BEFORE_DISCONNECTED) showDiagnosis();
   }
 }
 
