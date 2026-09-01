@@ -52,7 +52,7 @@ R = [
   '    el("statetx").textContent="proxy not running";\n'
   '    el("state").style.color="var(--crit)";\n'
   '    document.getElementById("setup").classList.remove("ok");'),
- ('buildTable(); tick(); tickTemps();',
+ ('buildTable(); buildSparks(); tick(); tickTemps();',
   'el("proxyaddr").textContent = PROXY;\n'
   'el("setproxy").onclick = e => { e.preventDefault();\n'
   '  const v = prompt("Proxy address", PROXY);\n'
