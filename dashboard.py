@@ -323,6 +323,25 @@ const hms = s => {
 // The API is polled every 2 s, so a countdown driven straight off it would jump
 // two seconds at a time. Take a reading, then run the clock locally from it.
 let clock = null;
+
+// The charts used to redraw only when /api/temps was re-fetched every 10 s, so
+// a 600-sample window crept forward ten samples at a time and looked frozen.
+// /api/temps is ~70 KB, so polling THAT hard would be wasteful - but the 1 s
+// status poll already carries every current reading. Append those to a local
+// buffer and redraw each tick; re-sync with the server occasionally to correct
+// any drift. Same cadence as the printer's own 1 Hz sampling, no extra traffic.
+const HISTORY = 600;
+function pushSample(st){
+  CH.forEach(c=>{
+    const o = st[c.key]; if(!o || o.temperature==null) return;
+    const d = store[c.key] || (store[c.key] = {temperatures: [], targets: []});
+    d.temperatures.push(o.temperature);
+    d.targets.push(o.target ?? null);
+    if(d.temperatures.length > HISTORY){ d.temperatures.shift(); d.targets.shift(); }
+  });
+}
+// do not yank the chart out from under a pointer that is reading it
+let hovering = false;
 let store = {};
 
 function statusColor(st, dev){
@@ -429,7 +448,8 @@ function drawSparks(){
       tip.style.top = "-4px";
       tip.textContent = `${v[i].toFixed(1)}° · ${v.length-1-i}s ago`;
     });
-    svg.addEventListener("pointerleave", ()=> tip.style.opacity = 0);
+    svg.addEventListener("pointerenter", ()=> hovering = true);
+    svg.addEventListener("pointerleave", ()=>{ hovering = false; tip.style.opacity = 0; });
   });
 }
 
@@ -501,7 +521,9 @@ function drawChart(){
     tip.style.left=Math.min(Math.max(lx+14,0), r.width-tip.offsetWidth-4)+"px";
     tip.style.top="8px";
   });
-  svg.addEventListener("pointerleave",()=>{ tip.style.opacity=0; cross.setAttribute("opacity",0); });
+  svg.addEventListener("pointerenter",()=> hovering = true);
+  svg.addEventListener("pointerleave",()=>{ hovering = false;
+    tip.style.opacity=0; cross.setAttribute("opacity",0); });
 }
 
 async function tick(){
@@ -519,6 +541,8 @@ async function tick(){
       : null;
     if(!clock) el("times").textContent = `${hm(el_)} elapsed`;
     drawClock();
+    pushSample(s);
+    if(!hovering){ try{ drawChart(); drawSparks(); }catch(e){} }
     el("z").textContent   = (ps.z_pos!=null? ps.z_pos.toFixed(2):"—")+" mm";
     el("fil").textContent = ((ps.filament_used||0)/1000).toFixed(2)+" m";
     el("spd").textContent = Math.round((gm.speed||0)/60)+" mm/s";
@@ -556,6 +580,7 @@ async function tickTemps(){
   // No silent catch. A failure in here used to leave the charts simply blank,
   // which is indistinguishable from "it did not deploy" - the worst way for a
   // panel to fail.
+  // full re-sync; between these the buffer is kept up to date by the status poll
   try { store = await get("temps"); }
   catch(e){ chartFail("cannot reach the proxy for history"); return; }
   try { drawChart(); }  catch(e){ chartFail("chart: "+e.message); }
@@ -681,8 +706,8 @@ setInterval(drawClock, 1000);
 let _rz; addEventListener("resize", () => {
   clearTimeout(_rz); _rz = setTimeout(()=>{ drawChart(); drawSparks(); }, 150);
 });
-setInterval(tick, 2000);
-setInterval(tickTemps, 10000);
+setInterval(tick, 1000);
+setInterval(tickTemps, 30000);
 </script></body></html>"""
 
 
