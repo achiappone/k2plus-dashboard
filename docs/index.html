@@ -64,7 +64,6 @@ svg{display:block;width:100%;height:64px;overflow:visible}
   padding:5px 12px;cursor:pointer}
 .camfoot button:hover{border-color:var(--text-secondary)}
 .camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
-.camfoot button:disabled{opacity:.4;cursor:not-allowed}
 .setup{background:var(--surface-1);border:1px solid var(--rule);padding:18px 20px;margin-bottom:20px}
 .setup h2{margin-bottom:8px}
 .setup code{display:block;font-family:"IBM Plex Mono",monospace;font-size:12.5px;
@@ -133,9 +132,9 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
 </div>
 </div>
 <script>
-// Served from GitHub Pages, this page has no backend of its own. It calls the
-// proxy running on YOUR machine. localhost is a trustworthy origin, so an HTTPS
-// page may reach it; the printer's own http:// address may not.
+// Served from GitHub Pages, this page has no backend of its own. It calls
+// the proxy running on YOUR machine. localhost is a trustworthy origin, so
+// an HTTPS page may reach it; the printer's own http:// address may not.
 const PROXY = localStorage.getItem("k2proxy") || "http://localhost:8770";
 const CH = [
   {key:"extruder",                          name:"Nozzle",  slot:1},
@@ -268,6 +267,8 @@ async function tickTemps(){
 // straight from this page. Content-Type stays text/plain so the request is
 // CORS-simple and no preflight is needed - the server only base64-decodes the
 // body, it does not inspect the type.
+// Only the WebRTC handshake is HTTP, and it is relayed by the proxy. The
+// media itself is UDP, straight to the printer, and not mixed content.
 const SIGNAL = PROXY + "/api/camera/offer";
 let pc=null;
 function camState(t,c){ el("camtx").textContent=t; el("campill").style.color=c; }
@@ -314,24 +315,4 @@ el("setproxy").onclick = e => { e.preventDefault();
 buildSparks(); tick(); tickTemps();
 setInterval(tick, 2000);
 setInterval(tickTemps, 10000);
-</script></body></html>"""
-
-
-class H(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-
-    def _cors(self):
-        origin = self.headers.get("Origin")
-        if origin in ORIGINS:                 # exact match, never a wildcard
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self._cors(); self.end_headers()
-
-    def do_POST(self):
-        """The ONLY write path, and it goes to the camera's signalling endpoint
-        - never to Moonraker. It cannot command the printer.
+</script></body></html>
