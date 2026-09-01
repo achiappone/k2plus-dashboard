@@ -75,3 +75,25 @@ and the paths, then:
 sudo cp deploy/k2-dashboard.service /etc/systemd/system/
 sudo systemctl enable --now k2-dashboard
 ```
+
+## Running it on Proxmox
+
+`deploy/proxmox-lxc.sh` builds a container for it. Run it on the Proxmox host,
+from the shell in the web UI at `:8006` or over ssh:
+
+```sh
+./deploy/proxmox-lxc.sh 10.0.0.42        # your printer's address
+```
+
+An **LXC, not a VM** — this is one Python process, so a container at ~40 MB that
+boots in a second is the right size. It clones this repo, installs a hardened
+systemd unit, and starts on host boot.
+
+Proxmox has its own web UI at `https://<host>:8006`; nothing extra is needed to
+manage it. `deploy/homepage/services.yaml` is a tile config if you want a
+[Homepage](https://gethomepage.dev) landing page pulling the printer, Fluidd and
+Proxmox together.
+
+Two host notes: a laptop will suspend on lid close and take the container with
+it (`HandleLidSwitch=ignore` in `/etc/systemd/logind.conf`), and installing
+Proxmox **erases the disk** — it is a bare-metal hypervisor, not a package.

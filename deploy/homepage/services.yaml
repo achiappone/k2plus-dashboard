@@ -1,0 +1,26 @@
+# gethomepage.dev - drop into a Homepage container for the landing UI.
+# Homepage queries Moonraker itself for the widget, so it needs the printer's
+# address; the dashboard tile just links through.
+- Printing:
+    - K2 Plus:
+        icon: creality.png
+        href: http://printer-dash.lan:8770
+        description: Live temps, progress and camera
+        widget:
+          type: moonraker
+          url: http://10.0.0.42:7125      # <- your printer
+    - Fluidd:
+        icon: fluidd.png
+        href: http://10.0.0.42:4408
+        description: Full printer control
+
+- Infrastructure:
+    - Proxmox:
+        icon: proxmox.png
+        href: https://10.0.0.10:8006
+        description: Hypervisor
+        widget:
+          type: proxmox
+          url: https://10.0.0.10:8006
+          username: api@pam!homepage      # create an API token, do not use root
+          password: "{{HOMEPAGE_VAR_PROXMOX_TOKEN}}"
