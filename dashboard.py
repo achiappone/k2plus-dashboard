@@ -383,8 +383,37 @@ async function get(what){
 
 // A single dropped poll is not a disconnection. Only say so after several in a
 // row, otherwise the setup panel appears and disappears and the page jumps.
-let misses = 0;
+let misses = 0, lastErr = "";
 const MISSES_BEFORE_DISCONNECTED = 5;
+
+// When a fetch fails the browser only says "Failed to fetch" - it will not tell
+// a page why it blocked it. This distinguishes the cases that actually matter:
+// a proxy that is not running looks identical to one the browser refused to let
+// us read, and they need completely different fixes.
+async function diagnose(){
+  const out = [];
+  try{
+    await fetch(PROXY+"/api/status", {mode:"no-cors", cache:"no-store"});
+    out.push("The proxy IS reachable, but the browser blocked the reply.");
+    out.push("That is a cross-origin / private-network policy block, not a "
+           + "network fault. Chrome requires the server to acknowledge "
+           + "Access-Control-Allow-Private-Network for a public https page to "
+           + "read a localhost address.");
+    out.push("Use http://localhost:8770 instead - same origin, no policy in the way.");
+  }catch(e){
+    out.push("The proxy is NOT reachable at " + PROXY + ".");
+    out.push("Start it:  K2_CONTROL=1 PRINTER_HOST=<ip> python3 dashboard.py");
+  }
+  if(lastErr) out.push("Last error: " + lastErr);
+  out.push("Page origin: " + location.origin);
+  return out;
+}
+async function showDiagnosis(){
+  const box = document.getElementById("diag");
+  if(!box) return;
+  box.textContent = "checking...";
+  box.innerHTML = (await diagnose()).map(l=>"• "+l).join("<br>");
+}
 
 // ---- thermals table -------------------------------------------------------
 function buildTable(){

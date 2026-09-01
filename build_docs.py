@@ -41,6 +41,7 @@ R = [
   '  <code>git clone https://github.com/achiappone/k2plus-dashboard\n'
   'cd k2plus-dashboard\n'
   'PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>\n'
+  '  <p id="diag" class="diag">checking&hellip;</p>\n'
   '  <p style="margin:0;font-size:12.5px;color:var(--text-muted)">Using\n'
   '  <span class="mono" id="proxyaddr"></span>. Different host or port?\n'
   '  <a href="#" id="setproxy">Change it</a>.</p>\n'
