@@ -433,12 +433,26 @@ function drawSparks(){
     if(tgt){ lo = Math.min(lo, tgt); hi = Math.max(hi, tgt); }
     // never let a flat trace fill the panel with noise: floor the span at 2 deg
     if(hi - lo < 2){ const m=(hi+lo)/2; lo=m-1; hi=m+1; }
+    // round the band outward so small wobbles do not rescale the panel
+    lo = Math.floor(lo); hi = Math.ceil(hi);
     const X = i => pad + i*(W-2*pad)/(v.length-1||1);
     const Y = t => H-pad - (t-lo)/(hi-lo)*(H-2*pad);
     const d2 = v.map((t,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(t).toFixed(1)}`).join("");
     const tl = tgt ? `<line x1="0" y1="${Y(tgt).toFixed(1)}" x2="${W}" y2="${Y(tgt).toFixed(1)}"
         stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="3 3" opacity=".6"/>` : "";
-    box.querySelector(".plot").innerHTML =
+    const sig = [W,H,lo.toFixed(1),hi.toFixed(1),v.length].join("|");
+    const plot = box.querySelector(".plot");
+    const have = plot.querySelector("svg");
+    if(have && plot.dataset.sig === sig){
+      have.querySelector("path")?.setAttribute("d", d2);
+      const dot = have.querySelector("circle");
+      if(dot){ dot.setAttribute("cx", X(v.length-1).toFixed(1));
+               dot.setAttribute("cy", Y(v.at(-1)).toFixed(1)); }
+      el("sn-"+c.slot).innerHTML = v.at(-1).toFixed(1)+'<span class="deg"> °C</span>';
+      return;
+    }
+    plot.dataset.sig = sig;
+    plot.innerHTML =
       `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
          ${tl}
          <path d="${d2}" fill="none" stroke="var(--series-${c.slot})" stroke-width="2"
@@ -475,8 +489,13 @@ function drawChart(){
                    .filter(s=>s.v.length);
   if(!series.length) return;
   const n = Math.max(...series.map(s=>s.v.length));
-  let hi = Math.max(...series.map(s=>Math.max(...s.v)));
-  hi = Math.ceil((hi*1.06)/50)*50 || 50;
+  let peak = Math.max(...series.map(s=>Math.max(...s.v)));
+  // Hysteresis. Recomputing the top every tick made the whole chart rescale and
+  // jump whenever the peak crossed a rounding boundary. Grow when it must,
+  // shrink only when there is a lot of headroom.
+  let hi = drawChart.hi || 0;
+  if(peak > hi*0.98 || peak < hi*0.55 || !hi) hi = Math.ceil((peak*1.10)/50)*50 || 50;
+  drawChart.hi = hi;
   const X = i => L + i*(W-L-R)/(n-1||1);
   const Y = v => H-B - (v/hi)*(H-T-B);
   const step = hi>200?50:hi>100?25:10;
@@ -491,17 +510,35 @@ function drawChart(){
   for(let k=0;k<=5;k++){
     const i = Math.round(k*(n-1)/5);
     const t = new Date(now - (n-1-i)*1000);
-    xlab += `<text x="${X(i)}" y="${H-10}" text-anchor="middle" font-size="14"
+    xlab += `<text class="xl" x="${X(i)}" y="${H-10}" text-anchor="middle" font-size="14"
               fill="var(--text-muted)" font-family="IBM Plex Mono,monospace">${
               String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}</text>`;
   }
   const paths = series.map(s=>{
     const off = n - s.v.length;
     const d = s.v.map((v,i)=>`${i?"L":"M"}${X(i+off).toFixed(1)},${Y(v).toFixed(1)}`).join("");
-    return `<path d="${d}" fill="none" stroke="var(--series-${s.c.slot})" stroke-width="2"
-                  stroke-linejoin="round" stroke-linecap="round"/>`;
+    return `<path id="ln-${s.c.slot}" d="${d}" fill="none" stroke="var(--series-${s.c.slot})"
+                  stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
   }).join("");
-  box.querySelector("svg")?.remove();
+  // Reuse the existing SVG when nothing structural changed - rebuilding it each
+  // tick is what made the page flicker and jump.
+  const sig = [W, H, hi, n, series.map(s=>s.c.slot).join()].join("|");
+  const existing = box.querySelector("svg");
+  if(existing && box.dataset.sig === sig){
+    series.forEach(s=>{
+      const off = n - s.v.length;
+      const d = s.v.map((v,i)=>`${i?"L":"M"}${X(i+off).toFixed(1)},${Y(v).toFixed(1)}`).join("");
+      existing.querySelector(`#ln-${s.c.slot}`)?.setAttribute("d", d);
+    });
+    // only the clock labels move
+    existing.querySelectorAll(".xl").forEach((t,k)=>{
+      const i = Math.round(k*(n-1)/5), d2 = new Date(now-(n-1-i)*1000);
+      t.textContent = `${String(d2.getHours()).padStart(2,"0")}:${String(d2.getMinutes()).padStart(2,"0")}`;
+    });
+    return;
+  }
+  box.dataset.sig = sig;
+  existing?.remove();
   box.insertAdjacentHTML("afterbegin",
     `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
           aria-label="Temperatures over the last ${Math.round(n/60)} minutes">
