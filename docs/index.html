@@ -136,7 +136,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">df04ccc · 01 Sep 16:07 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">0a6458c · 01 Sep 16:53 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -605,7 +605,7 @@ el("proxyaddr").textContent = PROXY;
 el("setproxy").onclick = e => { e.preventDefault();
   const v = prompt("Proxy address", PROXY);
   if (v) { localStorage.setItem("k2proxy", v.replace(/\/$/,"")); location.reload(); } };
-buildTable(); tick(); tickTemps();
+buildTable(); buildSparks(); tick(); tickTemps();
 function drawClock(){
   if(!clock){ return; }
   const d = (Date.now() - clock.at)/1000;

@@ -57,11 +57,22 @@ R = [
   'el("setproxy").onclick = e => { e.preventDefault();\n'
   '  const v = prompt("Proxy address", PROXY);\n'
   '  if (v) { localStorage.setItem("k2proxy", v.replace(/\\/$/,"")); location.reload(); } };\n'
-  'buildTable(); tick(); tickTemps();'),
+  'buildTable(); buildSparks(); tick(); tickTemps();'),
 ]
 for a, b in R:
     assert a in page, f"anchor vanished from dashboard.py: {a[:48]!r}"
     page = page.replace(a, b)
+
+# Every function the page needs at startup must actually be CALLED in the
+# output. Checking the anchor existed is not the same as checking the result
+# still works: the anchor was right while the replacement quietly dropped
+# buildSparks(), so the hosted page rendered an empty panel for a while.
+for fn in ("buildTable", "buildSparks", "tick", "tickTemps", "drawChart",
+           "drawSparks", "drawClock", "connectCam"):
+    assert f"function {fn}(" in page or f"{fn} =" in page, f"{fn} is not defined"
+for call in ("buildTable()", "buildSparks()", "tick()", "tickTemps()"):
+    assert call in page.split("function")[-1] or f"; {call}" in page or page.count(call) > 1, \
+        f"{call} is never invoked at startup"
 
 # the failure this file exists to prevent
 for leak in ("class H(", "http.server", "def do_POST", "BaseHTTPRequestHandler",
