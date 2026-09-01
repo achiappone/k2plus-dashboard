@@ -23,10 +23,11 @@ MOONRAKER = f"http://{PRINTER}:7125"
 CAMERA    = f"http://{PRINTER}:8000"      # WebRTC signalling origin, not an image URL
 PORT      = 8770
 
-OBJECTS = ("print_stats&virtual_sdcard&extruder&heater_bed&toolhead"
-           "&display_status&gcode_move"
-           "&" + urllib.parse.quote("heater_generic chamber_heater") +
-           "&" + urllib.parse.quote("temperature_sensor chamber_temp"))
+_OBJ = ["print_stats", "virtual_sdcard", "extruder", "heater_bed", "toolhead",
+        "display_status", "gcode_move",
+        "heater_generic chamber_heater", "temperature_fan chamber_fan",
+        "temperature_sensor chamber_temp", "temperature_sensor mcu_temp"]
+OBJECTS = "&".join(urllib.parse.quote(o) for o in _OBJ)
 # The UI may be served from GitHub Pages instead of from here. Browsers treat
 # http://localhost as a trustworthy origin, so an HTTPS page IS allowed to call
 # it - unlike the printer's own address, which is plain HTTP on a private IP and
@@ -59,9 +60,15 @@ TOKEN = os.environ.get("K2_TOKEN") or secrets.token_urlsafe(12)
 
 # Server-side ceilings. The UI clamps too, but the UI is not the security
 # boundary - anything can talk to this port.
-LIMITS = {"extruder": 300.0, "heater_bed": 120.0, "chamber_heater": 60.0}
-HEATER_GCODE = {"extruder": "extruder", "heater_bed": "heater_bed",
-                "chamber_heater": "chamber_heater"}
+LIMITS = {"extruder": 300.0, "heater_bed": 120.0,
+          "chamber_heater": 60.0, "chamber_fan": 70.0}
+# a temperature_fan is not a heater and takes its own command
+SETTER = {
+    "extruder":       "SET_HEATER_TEMPERATURE HEATER=extruder TARGET={t:.0f}",
+    "heater_bed":     "SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET={t:.0f}",
+    "chamber_heater": "SET_HEATER_TEMPERATURE HEATER=chamber_heater TARGET={t:.0f}",
+    "chamber_fan":    "SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET={t:.0f}",
+}
 
 ALLOWED = {                                   # the only things the proxy will fetch
     "status":  f"{MOONRAKER}/printer/objects/query?{OBJECTS}",
@@ -117,17 +124,34 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
 .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px}
 .v{font-size:17px;font-weight:500}
 .small{font-size:12px;color:var(--text-muted)}
-.sparks{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:20px}
-.spark{background:var(--surface-1);padding:12px 14px 6px;position:relative}
-.sparkhead{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}
-.sparkhead .nm{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:13px;font-weight:600}
-.sparkhead .now{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:15px;font-weight:500}
-.sparkhead .tgt{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--text-muted)}
-.swatch{width:9px;height:9px;flex:none}
-svg{display:block;width:100%;height:64px;overflow:visible}
-.tip{position:absolute;pointer-events:none;background:var(--text-primary);
-  color:var(--surface-1);font-family:"IBM Plex Mono",monospace;font-size:11px;
-  padding:3px 7px;transform:translate(-50%,-140%);opacity:0;transition:opacity .1s;white-space:nowrap}
+.therm{margin-top:20px}
+table.th{border-collapse:collapse;width:100%;font-size:13px}
+table.th th{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);
+  font-weight:600;text-align:left;padding:7px 10px;border-bottom:1px solid var(--rule)}
+table.th td{padding:7px 10px;border-bottom:1px solid var(--rule-2);vertical-align:middle}
+table.th tr:last-child td{border-bottom:0}
+table.th .n,table.th th.n{text-align:right;font-family:"IBM Plex Mono",monospace;
+  font-variant-numeric:tabular-nums}
+table.th th.tgt{text-align:left;width:118px}
+.nm{display:flex;align-items:center;gap:9px;font-weight:450}
+.swatch{width:10px;height:10px;flex:none;border-radius:2px}
+.pw{color:var(--text-muted)} .ch{color:var(--text-muted);font-size:12px}
+.act{font-size:14px}
+.deg{color:var(--text-muted);font-size:11px}
+td.tgtcell{display:flex;align-items:center;gap:5px}
+td.tgtcell input{width:62px;font-family:"IBM Plex Mono",monospace;font-size:13px;
+  background:var(--bg);color:var(--text-primary);border:1px solid var(--rule);padding:4px 7px;
+  text-align:right;font-variant-numeric:tabular-nums}
+td.tgtcell input:disabled{border-color:transparent;background:transparent;color:var(--text-muted)}
+td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
+.chart{position:relative;margin-top:16px}
+.chart svg{display:block;width:100%;height:260px}
+.tip{position:absolute;pointer-events:none;background:var(--surface-1);
+  border:1px solid var(--rule);color:var(--text-primary);
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;padding:7px 9px;
+  opacity:0;transition:opacity .08s;white-space:nowrap;box-shadow:0 3px 14px rgba(0,0,0,.18);z-index:5}
+.tip b{font-weight:500}
+.tip i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;font-style:normal}
 .cam{width:100%;aspect-ratio:4/3;border:0;background:#000;display:block;object-fit:contain}
 .camfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .camfoot button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
@@ -187,7 +211,15 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
     </div>
-    <div class="sparks" id="sparks"></div>
+    <div class="card therm">
+      <h2>Thermals</h2>
+      <div class="tw"><table class="th">
+        <thead><tr><th>Name</th><th class="n">Power</th><th class="n">Change</th>
+          <th class="n">Actual</th><th class="tgt">Target</th></tr></thead>
+        <tbody id="thbody"></tbody>
+      </table></div>
+      <div class="chart" id="chart"><div class="tip" id="ctip"></div></div>
+    </div>
 
     <div class="card ctl" id="controls" hidden>
       <h2>Controls</h2>
@@ -197,17 +229,8 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
                autocomplete="off" spellcheck="false">
         <button id="savetok">Save</button>
       </div>
-      <div class="ctlgrid">
-        <div class="ctlset"><label for="t-extruder">Nozzle</label>
-          <input id="t-extruder" type="number" min="0" max="300" step="5" placeholder="0">
-          <button data-heater="extruder">Set</button></div>
-        <div class="ctlset"><label for="t-heater_bed">Bed</label>
-          <input id="t-heater_bed" type="number" min="0" max="120" step="5" placeholder="0">
-          <button data-heater="heater_bed">Set</button></div>
-        <div class="ctlset"><label for="t-chamber_heater">Chamber</label>
-          <input id="t-chamber_heater" type="number" min="0" max="60" step="5" placeholder="0">
-          <button data-heater="chamber_heater">Set</button></div>
-      </div>
+      <p class="note" style="margin:0 0 4px">Set temperatures in the
+      <b>Target</b> column of the Thermals table &mdash; type a value and press Enter.</p>
       <div class="ctlrow">
         <button id="b-pause">Pause</button>
         <button id="b-resume">Resume</button>
@@ -243,10 +266,21 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 </div>
 </div>
 <script>
+// Served by this same process, so the API is same-origin. build_docs.py swaps
+// this for a localhost address when it generates the GitHub Pages copy, which
+// has no backend of its own.
+const PROXY = "";
+
+// Fixed slot order - never cycled, so a sensor keeps its colour whatever else
+// is on screen. All six are degrees C, so they share ONE axis; different
+// magnitudes are not a reason for a second one.
 const CH = [
-  {key:"extruder",                          name:"Nozzle",  slot:1},
-  {key:"heater_bed",                        name:"Bed",     slot:2},
-  {key:"heater_generic chamber_heater",     name:"Chamber", slot:3},
+  {key:"heater_generic chamber_heater", name:"Chamber Heater", slot:1, set:"chamber_heater", max:60},
+  {key:"extruder",                      name:"Extruder",       slot:2, set:"extruder",       max:300},
+  {key:"heater_bed",                    name:"Heater Bed",     slot:3, set:"heater_bed",     max:120},
+  {key:"temperature_fan chamber_fan",   name:"Chamber Fan",    slot:4, set:"chamber_fan",    max:70},
+  {key:"temperature_sensor chamber_temp", name:"Chamber Temp", slot:5},
+  {key:"temperature_sensor mcu_temp",   name:"Mcu Temp",       slot:6},
 ];
 const el = id => document.getElementById(id);
 const hm = s => { s=Math.max(0,Math.round(s||0));
@@ -261,56 +295,111 @@ function statusColor(st, dev){
 }
 
 async function get(what){
-  const r = await fetch("/api/"+what);
+  const r = await fetch(PROXY+"/api/"+what);
   if(!r.ok) throw new Error(what+" "+r.status);
   return (await r.json()).result;
 }
 
-function drawSpark(box, ch, series, target){
-  const w=520,h=64,pad=3;
-  const vals=series.filter(v=>typeof v==="number");
-  if(!vals.length) return;
-  let lo=Math.min(...vals), hi=Math.max(...vals);
-  if(target) { lo=Math.min(lo,target); hi=Math.max(hi,target); }
-  if(hi-lo<2){ const m=(hi+lo)/2; lo=m-1; hi=m+1; }
-  const X=i=>pad+i*(w-2*pad)/(vals.length-1||1);
-  const Y=v=>h-pad-(v-lo)/(hi-lo)*(h-2*pad);
-  const d=vals.map((v,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join("");
-  const tgt = target ? `<line x1="0" y1="${Y(target).toFixed(1)}" x2="${w}" y2="${Y(target).toFixed(1)}"
-     stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="3 3" opacity=".55"/>` : "";
-  box.querySelector(".plot").innerHTML =
-    `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-       <line x1="0" y1="${h-pad}" x2="${w}" y2="${h-pad}" stroke="var(--rule-2)" stroke-width="1"/>
-       ${tgt}
-       <path d="${d}" fill="none" stroke="var(--series-${ch.slot})" stroke-width="2"
-             stroke-linejoin="round" stroke-linecap="round"/>
-       <circle cx="${X(vals.length-1).toFixed(1)}" cy="${Y(vals.at(-1)).toFixed(1)}" r="3.5"
-               fill="var(--series-${ch.slot})" stroke="var(--surface-1)" stroke-width="2"/>
-       <rect class="hit" x="0" y="0" width="${w}" height="${h}" fill="transparent"/>
-     </svg>`;
-  const svg=box.querySelector("svg"), tip=box.querySelector(".tip");
-  svg.addEventListener("pointermove",e=>{
-    const r=svg.getBoundingClientRect();
-    const i=Math.round((e.clientX-r.left)/r.width*(vals.length-1));
-    const v=vals[Math.max(0,Math.min(vals.length-1,i))];
-    const ago=((vals.length-1-i)).toFixed(0);
-    tip.style.opacity=1; tip.style.left=(e.clientX-r.left)+"px"; tip.style.top="0px";
-    tip.textContent=`${v.toFixed(1)} °C · ${ago}s ago`;
+// ---- thermals table -------------------------------------------------------
+function buildTable(){
+  el("thbody").innerHTML = CH.map(c=>`
+    <tr data-k="${c.key}">
+      <td><span class="nm"><span class="swatch" style="background:var(--series-${c.slot})"></span>${c.name}</span></td>
+      <td class="n pw" id="pw-${c.slot}"></td>
+      <td class="n ch" id="ch-${c.slot}"></td>
+      <td class="n act" id="ac-${c.slot}">—</td>
+      <td class="tgtcell">${c.set
+        ? `<input id="tg-${c.slot}" type="number" min="0" max="${c.max}" step="1"
+             aria-label="${c.name} target" disabled><span class="deg">°C</span>`
+        : ``}</td>
+    </tr>`).join("");
+  CH.filter(c=>c.set).forEach(c=>{
+    const i = el("tg-"+c.slot);
+    i.addEventListener("keydown", ev => { if(ev.key==="Enter") applyTarget(c, i); });
+    i.addEventListener("blur", () => { if(i.dataset.dirty==="1") applyTarget(c, i); });
+    i.addEventListener("input", () => { i.dataset.dirty="1"; });
   });
-  svg.addEventListener("pointerleave",()=>tip.style.opacity=0);
+}
+async function applyTarget(c, input){
+  input.dataset.dirty="0";
+  const v = Number(input.value);
+  if(!(v>=0 && v<=c.max)){ msg(`${c.name} must be 0..${c.max}`,"err"); return; }
+  const j = await send("temp", JSON.stringify({heater:c.set, target:v}));
+  if(j) msg(j.sent, "ok");
 }
 
-function buildSparks(){
-  el("sparks").innerHTML = CH.map(c=>`
-    <div class="spark" data-k="${c.key}">
-      <div class="sparkhead">
-        <span class="swatch" style="background:var(--series-${c.slot})"></span>
-        <span class="nm">${c.name}</span>
-        <span class="tgt" id="t-${c.slot}"></span>
-        <span class="now" id="n-${c.slot}">—</span>
-      </div>
-      <div class="plot"></div><div class="tip"></div>
-    </div>`).join("");
+// change in deg/s from the tail of the history, averaged over ~5 s so it is
+// not just sensor noise
+function slope(v){
+  if(!v || v.length<6) return 0;
+  const n=Math.min(5, v.length-1);
+  return (v[v.length-1] - v[v.length-1-n]) / n;
+}
+
+// ---- one chart, six series, one degrees-C axis ---------------------------
+function drawChart(){
+  const box = el("chart"), W=1000, H=260, L=42, R=10, T=10, B=26;
+  const series = CH.map(c=>({c, v:(store[c.key]||{}).temperatures||[]}))
+                   .filter(s=>s.v.length);
+  if(!series.length) return;
+  const n = Math.max(...series.map(s=>s.v.length));
+  let hi = Math.max(...series.map(s=>Math.max(...s.v)));
+  hi = Math.ceil((hi*1.06)/50)*50 || 50;
+  const X = i => L + i*(W-L-R)/(n-1||1);
+  const Y = v => H-B - (v/hi)*(H-T-B);
+  const step = hi>200?50:hi>100?25:10;
+  let grid="", ylab="";
+  for(let g=0; g<=hi; g+=step){
+    grid += `<line x1="${L}" y1="${Y(g)}" x2="${W-R}" y2="${Y(g)}" stroke="var(--rule-2)" stroke-width="1"/>`;
+    ylab += `<text x="${L-7}" y="${Y(g)+3.5}" text-anchor="end" font-size="10"
+              fill="var(--text-muted)" font-family="IBM Plex Mono,monospace">${g}</text>`;
+  }
+  // x axis in clock time - samples are 1 Hz, newest last
+  const now = Date.now(); let xlab="";
+  for(let k=0;k<=5;k++){
+    const i = Math.round(k*(n-1)/5);
+    const t = new Date(now - (n-1-i)*1000);
+    xlab += `<text x="${X(i)}" y="${H-8}" text-anchor="middle" font-size="10"
+              fill="var(--text-muted)" font-family="IBM Plex Mono,monospace">${
+              String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}</text>`;
+  }
+  const paths = series.map(s=>{
+    const off = n - s.v.length;
+    const d = s.v.map((v,i)=>`${i?"L":"M"}${X(i+off).toFixed(1)},${Y(v).toFixed(1)}`).join("");
+    return `<path d="${d}" fill="none" stroke="var(--series-${s.c.slot})" stroke-width="2"
+                  stroke-linejoin="round" stroke-linecap="round"/>`;
+  }).join("");
+  box.querySelector("svg")?.remove();
+  box.insertAdjacentHTML("afterbegin",
+    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+          aria-label="Temperatures over the last ${Math.round(n/60)} minutes">
+       ${grid}${ylab}${xlab}${paths}
+       <line id="cross" x1="0" y1="${T}" x2="0" y2="${H-B}" stroke="var(--text-muted)"
+             stroke-width="1" opacity="0"/>
+       <rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="transparent" id="hit"/>
+     </svg>`);
+  const svg=box.querySelector("svg"), tip=el("ctip"), cross=svg.querySelector("#cross");
+  svg.addEventListener("pointermove", e=>{
+    const r=svg.getBoundingClientRect();
+    const px=(e.clientX-r.left)/r.width*W;
+    if(px<L||px>W-R){ tip.style.opacity=0; cross.setAttribute("opacity",0); return; }
+    const i=Math.round((px-L)/(W-L-R)*(n-1));
+    cross.setAttribute("opacity",".5");
+    cross.setAttribute("x1",X(i)); cross.setAttribute("x2",X(i));
+    const t=new Date(now-(n-1-i)*1000);
+    tip.innerHTML = `<b>${String(t.getHours()).padStart(2,"0")}:${
+      String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}</b><br>`
+      + series.map(s=>{
+          const off=n-s.v.length, v=s.v[i-off];
+          return v==null?"":`<i style="background:var(--series-${s.c.slot})"></i>${
+            s.c.name} ${v.toFixed(1)}°`;
+        }).filter(Boolean).join("<br>");
+    tip.style.opacity=1;
+    const lx=(e.clientX-r.left);
+    tip.style.left=Math.min(Math.max(lx+14,0), r.width-tip.offsetWidth-4)+"px";
+    tip.style.top="8px";
+  });
+  svg.addEventListener("pointerleave",()=>{ tip.style.opacity=0; cross.setAttribute("opacity",0); });
 }
 
 async function tick(){
@@ -332,12 +421,21 @@ async function tick(){
     let dev=false;
     CH.forEach(c=>{
       const o=s[c.key]||{};
-      const n=el("n-"+c.slot), t=el("t-"+c.slot);
-      if(o.temperature!=null){
-        n.textContent=o.temperature.toFixed(1)+" °C";
-        t.textContent=o.target?("target "+o.target.toFixed(0)):"";
-        if(o.target>0 && Math.abs(o.temperature-o.target)>8) dev=true;
+      if(o.temperature!=null)
+        el("ac-"+c.slot).innerHTML = o.temperature.toFixed(1)+'<span class="deg"> °C</span>';
+      // heaters report power 0..1; a temperature_fan reports speed instead
+      const pw = (o.power!=null) ? o.power : o.speed;
+      el("pw-"+c.slot).textContent = (pw!=null) ? Math.round(pw*100)+"%" : "";
+      const sl = slope((store[c.key]||{}).temperatures);
+      el("ch-"+c.slot).textContent = (sl>=0?"+":"")+sl.toFixed(1)+" °C/s";
+      const inp = c.set ? el("tg-"+c.slot) : null;
+      if(inp){
+        inp.disabled = !CONTROL_ON;
+        // do not fight the user while they are typing in it
+        if(document.activeElement!==inp && inp.dataset.dirty!=="1")
+          inp.value = (o.target!=null) ? Math.round(o.target) : "";
       }
+      if(o.target>0 && Math.abs(o.temperature-o.target)>8) dev=true;
     });
     const st=ps.state||"—";
     el("statetx").textContent = st + (dev?" · temp off target":"");
@@ -349,22 +447,7 @@ async function tick(){
 }
 
 async function tickTemps(){
-  try{
-    store = await get("temps");
-    const rows=[];
-    CH.forEach(c=>{
-      const box=document.querySelector(`.spark[data-k="${CSS.escape(c.key)}"]`);
-      const d=store[c.key]; if(!box||!d) return;
-      const t=d.temperatures||[], tg=(d.targets||[]).at(-1);
-      drawSpark(box,c,t,tg);
-      const v=t.filter(x=>typeof x==="number");
-      rows.push(`<tr><td>${c.name}</td><td class="n">${v.at(-1)?.toFixed(1)??"—"}</td>
-        <td class="n">${tg?tg.toFixed(0):"—"}</td>
-        <td class="n">${Math.min(...v).toFixed(1)}</td>
-        <td class="n">${Math.max(...v).toFixed(1)}</td></tr>`);
-    });
-    el("tbody").innerHTML=rows.join("");
-  }catch(e){}
+  try{ store = await get("temps"); drawChart(); }catch(e){}
 }
 
 // ---- camera: WebRTC, negotiated here rather than framed -------------------
@@ -414,6 +497,7 @@ connectCam();
 // Every write carries X-K2-Token. That header is what makes this safe to leave
 // listening: CORS would not stop a hostile page POSTing here, but a custom
 // header forces a preflight that only the allowed origins pass.
+let CONTROL_ON = false;
 let TOKEN = localStorage.getItem("k2token") || "";
 el("tok").value = TOKEN;
 function msg(t, cls){ const m=el("ctlmsg"); m.textContent=t; m.className="msg "+(cls||""); }
@@ -432,12 +516,6 @@ async function send(action, body, extra){
     return j;
   }catch(e){ msg("proxy unreachable", "err"); return null; }
 }
-document.querySelectorAll(".ctlset button").forEach(b => b.onclick = async () => {
-  const h=b.dataset.heater, v=el("t-"+h).value;
-  if(v==="") { msg("enter a target", "err"); return; }
-  const j = await send("temp", JSON.stringify({heater:h, target:Number(v)}));
-  if(j) msg(j.sent, "ok");
-});
 el("b-pause").onclick  = async () => { const j=await send("pause");  if(j) msg("paused","ok"); };
 el("b-resume").onclick = async () => { const j=await send("resume"); if(j) msg("resumed","ok"); };
 el("b-cancel").onclick = async () => {
@@ -463,9 +541,10 @@ get("info").then(i=>{
 }).catch(()=>{});
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
-  if(c.control) el("controls").hidden = false;
+  CONTROL_ON = !!c.control;
+  if(CONTROL_ON) el("controls").hidden = false;
 }).catch(()=>{});
-buildSparks(); tick(); tickTemps();
+buildTable(); tick(); tickTemps();
 setInterval(tick, 2000);
 setInterval(tickTemps, 10000);
 </script></body></html>"""
@@ -527,7 +606,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 if not (0 <= target <= cap):
                     return self._json(400,
                         {"error": f"{heater} target must be 0..{cap:.0f}, got {target:.0f}"})
-                g = f"SET_HEATER_TEMPERATURE HEATER={HEATER_GCODE[heater]} TARGET={target:.0f}"
+                g = SETTER[heater].format(t=target)
                 self._moonraker("/printer/gcode/script?" +
                                 urllib.parse.urlencode({"script": g}))
                 return self._json(200, {"ok": True, "sent": g})

@@ -15,14 +15,11 @@ src = pathlib.Path("dashboard.py").read_text()
 page = src.split('PAGE = r"""', 1)[1].split('"""', 1)[0]
 
 R = [
- ('const r = await fetch("/api/"+what);',
-  'const r = await fetch(PROXY+"/api/"+what);'),
- ('const CH = [',
-  '// Served from GitHub Pages, this page has no backend of its own. It calls\n'
-  '// the proxy running on YOUR machine. localhost is a trustworthy origin, so\n'
-  "// an HTTPS page may reach it; the printer's own http:// address may not.\n"
-  'const PROXY = localStorage.getItem("k2proxy") || "http://localhost:8770";\n'
-  'const CH = ['),
+ ('const PROXY = "";',
+  '// This page has no backend. It calls the proxy running on YOUR machine.\n'
+  '// localhost is a trustworthy origin, so an HTTPS page may reach it; the\n'
+  "// printer's own http:// address may not.\n"
+  'const PROXY = localStorage.getItem("k2proxy") || "http://localhost:8770";'),
  ('const CAM = "__CAMERA__";',
   '// Only the WebRTC handshake is HTTP, and it is relayed by the proxy. The\n'
   '// media itself is UDP, straight to the printer, and not mixed content.\n'
@@ -55,12 +52,12 @@ R = [
   '    el("statetx").textContent="proxy not running";\n'
   '    el("state").style.color="var(--crit)";\n'
   '    document.getElementById("setup").classList.remove("ok");'),
- ('buildSparks(); tick(); tickTemps();',
+ ('buildTable(); tick(); tickTemps();',
   'el("proxyaddr").textContent = PROXY;\n'
   'el("setproxy").onclick = e => { e.preventDefault();\n'
   '  const v = prompt("Proxy address", PROXY);\n'
   '  if (v) { localStorage.setItem("k2proxy", v.replace(/\\/$/,"")); location.reload(); } };\n'
-  'buildSparks(); tick(); tickTemps();'),
+  'buildTable(); tick(); tickTemps();'),
 ]
 for a, b in R:
     assert a in page, f"anchor vanished from dashboard.py: {a[:48]!r}"
