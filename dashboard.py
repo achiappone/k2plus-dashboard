@@ -155,6 +155,8 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .spkhead .rng{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--text-muted)}
 .spark svg{display:block;width:100%;height:auto}
 .spark .tip{font-size:12px;padding:5px 8px}
+.failmsg{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--crit);
+  padding:22px 4px;margin:0}
 .chart{position:relative;margin-top:16px}
 .chart svg{display:block;width:100%;height:auto}
 .tip{position:absolute;pointer-events:none;background:var(--surface-1);
@@ -530,7 +532,18 @@ async function tick(){
 }
 
 async function tickTemps(){
-  try{ store = await get("temps"); drawChart(); drawSparks(); }catch(e){}
+  // No silent catch. A failure in here used to leave the charts simply blank,
+  // which is indistinguishable from "it did not deploy" - the worst way for a
+  // panel to fail.
+  try { store = await get("temps"); }
+  catch(e){ chartFail("cannot reach the proxy for history"); return; }
+  try { drawChart(); }  catch(e){ chartFail("chart: "+e.message); }
+  try { drawSparks(); } catch(e){ chartFail("panels: "+e.message, "sparks"); }
+}
+function chartFail(text, where){
+  const box = el(where === "sparks" ? "sparks" : "chart");
+  if(box) box.innerHTML = '<p class="failmsg">'+text+'</p>';
+  console.error(text);
 }
 
 // ---- camera: WebRTC, negotiated here rather than framed -------------------
