@@ -352,10 +352,20 @@ function statusColor(st, dev){
 }
 
 async function get(what){
-  const r = await fetch(PROXY+"/api/"+what);
-  if(!r.ok) throw new Error(what+" "+r.status);
-  return (await r.json()).result;
+  // Abort rather than let a slow request overlap the next tick and pile up.
+  const ac = new AbortController();
+  const t = setTimeout(()=>ac.abort(), 4000);
+  try{
+    const r = await fetch(PROXY+"/api/"+what, {signal: ac.signal});
+    if(!r.ok) throw new Error(what+" "+r.status);
+    return (await r.json()).result;
+  } finally { clearTimeout(t); }
 }
+
+// A single dropped poll is not a disconnection. Only say so after several in a
+// row, otherwise the setup panel appears and disappears and the page jumps.
+let misses = 0;
+const MISSES_BEFORE_DISCONNECTED = 5;
 
 // ---- thermals table -------------------------------------------------------
 function buildTable(){
@@ -853,8 +863,14 @@ class H(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", PORT), H) as srv:
+    # THREADING, not the plain TCPServer this used to be. Single-threaded, one
+    # slow upstream call (a 70 KB /api/temps, or the camera handshake) blocked
+    # every other request - so at 1 Hz the next poll would fail and the page
+    # would flip to "not connected" and back.
+    class Srv(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+    with Srv(("127.0.0.1", PORT), H) as srv:
         banner = [f"dashboard  http://localhost:{PORT}",
                   f"printer    {MOONRAKER}   camera {CAMERA}",
                   "read endpoints:  " + ", ".join(sorted(ALLOWED))]

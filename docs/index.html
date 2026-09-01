@@ -136,7 +136,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">89f0739 · 01 Sep 16:57 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">676d450 · 01 Sep 18:40 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -288,10 +288,20 @@ function statusColor(st, dev){
 }
 
 async function get(what){
-  const r = await fetch(PROXY+"/api/"+what);
-  if(!r.ok) throw new Error(what+" "+r.status);
-  return (await r.json()).result;
+  // Abort rather than let a slow request overlap the next tick and pile up.
+  const ac = new AbortController();
+  const t = setTimeout(()=>ac.abort(), 4000);
+  try{
+    const r = await fetch(PROXY+"/api/"+what, {signal: ac.signal});
+    if(!r.ok) throw new Error(what+" "+r.status);
+    return (await r.json()).result;
+  } finally { clearTimeout(t); }
 }
+
+// A single dropped poll is not a disconnection. Only say so after several in a
+// row, otherwise the setup panel appears and disappears and the page jumps.
+let misses = 0;
+const MISSES_BEFORE_DISCONNECTED = 5;
 
 // ---- thermals table -------------------------------------------------------
 function buildTable(){
