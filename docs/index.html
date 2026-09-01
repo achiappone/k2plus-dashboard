@@ -1,46 +1,4 @@
-#!/usr/bin/env python3
-"""
-Local dashboard for the K2 Plus (Moonraker + WebRTC camera).
-
-WHY A LOCAL SERVER AND NOT A PUBLISHED PAGE: a hosted artifact is sandboxed -
-it cannot fetch a private LAN address at all. And Moonraker sends no CORS
-headers, so even a local file:// page cannot call it directly. This serves the
-page and proxies the API from the same origin, which sidesteps both.
-
-READ-ONLY BY WHITELIST. The proxy forwards GET to a fixed list of status
-endpoints and nothing else. It cannot post gcode, set temperatures, or
-start/pause/cancel a job even if something asks it to.
-
-    python3 dashboard.py      then open http://localhost:8770
-"""
-import http.server, socketserver, urllib.request, urllib.parse, json, os, sys
-
-# Your printer's address. Override without editing this file:
-#     PRINTER_HOST=10.0.0.42 python3 dashboard.py
-PRINTER = os.environ.get("PRINTER_HOST", "printer.local")
-MOONRAKER = f"http://{PRINTER}:7125"
-CAMERA    = f"http://{PRINTER}:8000"      # WebRTC signalling origin, not an image URL
-PORT      = 8770
-
-OBJECTS = ("print_stats&virtual_sdcard&extruder&heater_bed&toolhead"
-           "&display_status&gcode_move"
-           "&" + urllib.parse.quote("heater_generic chamber_heater") +
-           "&" + urllib.parse.quote("temperature_sensor chamber_temp"))
-# The UI may be served from GitHub Pages instead of from here. Browsers treat
-# http://localhost as a trustworthy origin, so an HTTPS page IS allowed to call
-# it - unlike the printer's own address, which is plain HTTP on a private IP and
-# gets blocked as mixed content no matter what network you are on. So the page
-# can live anywhere; the proxy has to be local either way.
-ORIGINS = ("https://achiappone.github.io", "http://localhost:8770",
-           "http://127.0.0.1:8770")
-
-ALLOWED = {                                   # the only things the proxy will fetch
-    "status":  f"{MOONRAKER}/printer/objects/query?{OBJECTS}",
-    "temps":   f"{MOONRAKER}/server/temperature_store?include_monitors=false",
-    "info":    f"{MOONRAKER}/printer/info",
-}
-
-PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
+<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>K2 Plus</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;450&display=swap">
@@ -106,6 +64,15 @@ svg{display:block;width:100%;height:64px;overflow:visible}
   padding:5px 12px;cursor:pointer}
 .camfoot button:hover{border-color:var(--text-secondary)}
 .camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
+.camfoot button:disabled{opacity:.4;cursor:not-allowed}
+.camoff{aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:26px;color:var(--text-secondary);font-size:13px;line-height:1.6;
+  background:var(--surface-1)}
+.setup{background:var(--surface-1);border:1px solid var(--rule);padding:18px 20px;margin-bottom:20px}
+.setup h2{margin-bottom:8px}
+.setup code{display:block;font-family:"IBM Plex Mono",monospace;font-size:12.5px;
+  background:var(--bg);border:1px solid var(--rule);padding:10px 12px;margin:10px 0;overflow-x:auto}
+.setup.ok{display:none}
 .camwrap{background:#000;border:1px solid var(--rule)}
 .note{font-size:12px;color:var(--text-muted);margin-top:10px}
 table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:12px}
@@ -120,6 +87,17 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
 </header>
 
+<div class="setup" id="setup">
+  <h2>Not connected</h2>
+  <p style="margin:0">This page is the UI only. The proxy that talks to your printer
+  runs on your own machine &mdash; start it and this panel disappears.</p>
+  <code>git clone https://github.com/achiappone/k2plus-dashboard
+cd k2plus-dashboard
+PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
+  <p style="margin:0;font-size:12.5px;color:var(--text-muted)">Talking to
+  <span class="mono" id="proxyaddr"></span>. Different port?
+  <a href="#" id="setproxy">Change it</a>.</p>
+</div>
 <div class="grid">
   <div>
     <div class="card">
@@ -158,6 +136,10 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 </div>
 </div>
 <script>
+// Served from GitHub Pages, this page has no backend of its own. It calls the
+// proxy running on YOUR machine. localhost is a trustworthy origin, so an HTTPS
+// page is allowed to reach it - the printer's own http:// address is not.
+const PROXY = localStorage.getItem("k2proxy") || "http://localhost:8770";
 const CH = [
   {key:"extruder",                          name:"Nozzle",  slot:1},
   {key:"heater_bed",                        name:"Bed",     slot:2},
@@ -176,7 +158,7 @@ function statusColor(st, dev){
 }
 
 async function get(what){
-  const r = await fetch("/api/"+what);
+  const r = await fetch(PROXY+"/api/"+what);
   if(!r.ok) throw new Error(what+" "+r.status);
   return (await r.json()).result;
 }
@@ -230,6 +212,7 @@ function buildSparks(){
 
 async function tick(){
   try{
+    document.getElementById("setup").classList.add("ok");
     const s=(await get("status")).status;
     const ps=s.print_stats||{}, vs=s.virtual_sdcard||{}, gm=s.gcode_move||{};
     const prog=(vs.progress||0)*100;
@@ -258,8 +241,9 @@ async function tick(){
     el("statetx").textContent = st + (dev?" · temp off target":"");
     el("state").style.color = statusColor(st, dev);
   }catch(e){
-    el("statetx").textContent="unreachable";
+    el("statetx").textContent="proxy not running";
     el("state").style.color="var(--crit)";
+    document.getElementById("setup").classList.remove("ok");
   }
 }
 
@@ -287,7 +271,7 @@ async function tickTemps(){
 // straight from this page. Content-Type stays text/plain so the request is
 // CORS-simple and no preflight is needed - the server only base64-decodes the
 // body, it does not inspect the type.
-const CAM = "__CAMERA__";
+const CAM = localStorage.getItem("k2cam") || "";
 let pc=null;
 function camState(t,c){ el("camtx").textContent=t; el("campill").style.color=c; }
 function connectCam(){
@@ -323,59 +307,21 @@ el("grab").onclick = () => {
   a.download=`k2-${new Date().toISOString().replace(/[:.]/g,"-")}.png`;
   a.href=c.toDataURL("image/png"); a.click();
 };
-connectCam();
+if (location.protocol === "https:" && !CAM) {
+  document.querySelector(".camwrap").innerHTML =
+    '<div class="camoff">Camera unavailable from a hosted page.<br>' +
+    'It streams over plain HTTP from a private address, which an HTTPS page ' +
+    'cannot reach. Open the dashboard locally at <b>' + PROXY + '</b> for video.</div>';
+  el("campill").style.display = "none";
+  el("grab").disabled = true; el("recon").disabled = true;
+} else { connectCam(); }
 
 get("info").then(i=>el("host").textContent=i.hostname+" · "+i.software_version).catch(()=>{});
+el("proxyaddr").textContent = PROXY;
+el("setproxy").onclick = e => { e.preventDefault();
+  const v = prompt("Proxy address", PROXY);
+  if (v) { localStorage.setItem("k2proxy", v.replace(/\/$/,"")); location.reload(); } };
 buildSparks(); tick(); tickTemps();
 setInterval(tick, 2000);
 setInterval(tickTemps, 10000);
-</script></body></html>"""
-
-
-class H(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-
-    def _cors(self):
-        origin = self.headers.get("Origin")
-        if origin in ORIGINS:                 # exact match, never a wildcard
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET")
-        self._cors(); self.end_headers()
-
-    def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            body = PAGE.replace("__CAMERA__", CAMERA).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers(); self.wfile.write(body); return
-        if self.path.startswith("/api/"):
-            key = self.path[5:]
-            if key not in ALLOWED:              # <- read-only whitelist
-                self.send_error(403, "not an allowed endpoint"); return
-            try:
-                with urllib.request.urlopen(ALLOWED[key], timeout=8) as r:
-                    data = r.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self._cors()
-                self.end_headers(); self.wfile.write(data)
-            except Exception as e:
-                self.send_error(502, str(e))
-            return
-        self.send_error(404)
-
-
-if __name__ == "__main__":
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", PORT), H) as srv:
-        print(f"dashboard  http://localhost:{PORT}")
-        print(f"printer    {MOONRAKER}   camera {CAMERA}")
-        print("read-only proxy: " + ", ".join(sorted(ALLOWED)))
-        try: srv.serve_forever()
-        except KeyboardInterrupt: print("\nstopped")
+</script></body></html>

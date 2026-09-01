@@ -97,3 +97,21 @@ Proxmox together.
 Two host notes: a laptop will suspend on lid close and take the container with
 it (`HandleLidSwitch=ignore` in `/etc/systemd/logind.conf`), and installing
 Proxmox **erases the disk** — it is a bare-metal hypervisor, not a package.
+
+## Hosted UI
+
+The interface is published at
+**[achiappone.github.io/k2plus-dashboard](https://achiappone.github.io/k2plus-dashboard/)**.
+
+It is the UI only — there is no backend behind it. It calls the proxy running on
+*your* machine, and shows setup instructions until that proxy answers.
+
+This works because browsers treat `http://localhost` as a **trustworthy origin**,
+so an HTTPS page is allowed to call it. The printer's own address gets no such
+exemption: it is plain HTTP on a private IP, which is blocked as mixed content
+from an HTTPS page regardless of which network you are on. That is also why the
+camera panel is disabled on the hosted page — video comes straight from the
+printer, so it only works when you open the dashboard locally.
+
+The proxy allows exactly two origins by exact match, GET only. A page from
+anywhere else gets no CORS header and the browser drops the response.
