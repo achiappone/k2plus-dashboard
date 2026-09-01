@@ -104,6 +104,10 @@ body{margin:0;background:var(--bg);color:var(--text-primary);
 .wrap{max-width:1240px;margin:0 auto;padding:20px 18px 60px}
 h1,h2,.k{font-family:"IBM Plex Sans Condensed",sans-serif}
 .mono,.v,.tt{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+/* LAYOUT STABILITY. Every element whose text changes gets tabular figures and a
+   reserved width. Without this the digits themselves reflow the page: "9.8%"
+   and "100.0%" are different widths, and at 1 Hz that is a permanent shimmer. */
+.stable{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
 header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
   border-bottom:2px solid var(--text-primary);padding-bottom:12px;margin-bottom:20px}
 h1{font-size:26px;margin:0;letter-spacing:-.01em}
@@ -111,17 +115,22 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 .build{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--text-muted);
   border:1px solid var(--rule);padding:2px 8px;white-space:nowrap}
 .pill{margin-left:auto;display:inline-flex;align-items:center;gap:7px;
+  min-width:15ch;justify-content:center;
   border:1px solid currentColor;padding:3px 11px;font-family:"IBM Plex Mono",monospace;
   font-size:12px;letter-spacing:.03em}
 .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
-.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px}
+.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative}
+.grid>*{min-width:0}
+.sparks>*{min-width:0}
+.card{contain:layout}
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
 .card{background:var(--surface-1);border:1px solid var(--rule);padding:16px 18px}
 h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);
   margin:0 0 14px;font-weight:600}
 .hero{display:flex;align-items:flex-end;gap:16px;margin-bottom:4px}
 .hero .big{font-family:"IBM Plex Mono",monospace;font-size:54px;font-weight:500;
-  line-height:.95;letter-spacing:-.02em}
+  line-height:.95;letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+  min-width:5.2ch;display:inline-block}
 .hero .sub{font-size:13px;color:var(--text-secondary);padding-bottom:7px}
 .bar{height:7px;background:var(--rule-2);margin:14px 0 4px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--series-1);transition:width .6s}
@@ -131,6 +140,9 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
 .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px}
 .v{font-size:17px;font-weight:500}
 .small{font-size:12px;color:var(--text-muted)}
+#times{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  min-height:1.5em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#fname{max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .therm{margin-top:20px}
 table.th{border-collapse:collapse;width:100%;font-size:15px}
 table.th th{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);
@@ -139,6 +151,9 @@ table.th td{padding:9px 10px;border-bottom:1px solid var(--rule-2);vertical-alig
 table.th tr:last-child td{border-bottom:0}
 table.th .n,table.th th.n{text-align:right;font-family:"IBM Plex Mono",monospace;
   font-variant-numeric:tabular-nums}
+table.th td.n.pw{width:76px}  table.th td.n.ch{width:104px}
+table.th td.n.act{width:104px} table.th td:first-child{width:auto}
+table.th{table-layout:fixed}
 table.th th.tgt{text-align:left;width:118px}
 .nm{display:flex;align-items:center;gap:9px;font-weight:450}
 .swatch{width:10px;height:10px;flex:none;border-radius:2px}
@@ -158,14 +173,18 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .spark{background:var(--surface-1);padding:11px 13px 4px;position:relative}
 .spkhead{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
 .spkhead .nm2{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:13.5px;font-weight:600}
-.spkhead .now{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:15px;font-weight:500}
-.spkhead .rng{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--text-muted)}
-.spark svg{display:block;width:100%;height:auto}
+.spkhead .now{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:15px;
+  font-weight:500;font-variant-numeric:tabular-nums;min-width:8ch;text-align:right}
+.spkhead .rng{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--text-muted);
+  font-variant-numeric:tabular-nums;min-width:11ch}
+.spkhead .nm2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spark svg{display:block;width:100%;height:62px}
 .spark .tip{font-size:12px;padding:5px 8px}
+.spark .plot{min-height:62px}
 .failmsg{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--crit);
   padding:22px 4px;margin:0}
-.chart{position:relative;margin-top:16px}
-.chart svg{display:block;width:100%;height:auto}
+.chart{position:relative;margin-top:16px;min-height:300px}
+.chart svg{display:block;width:100%;height:300px}
 .tip{position:absolute;pointer-events:none;background:var(--surface-1);
   border:1px solid var(--rule);color:var(--text-primary);
   font-family:"IBM Plex Mono",monospace;font-size:13px;padding:9px 11px;
@@ -428,7 +447,7 @@ function drawSparks(){
     const v = (d.temperatures||[]).filter(x=>typeof x==="number");
     if(!v.length) return;
     const tgt = (d.targets||[]).at(-1);
-    const W = Math.max(180, Math.round(box.clientWidth - 26)), H = 62, pad = 4;
+    const W = Math.max(180, Math.round((box.clientWidth - 26)/8)*8), H = 62, pad = 4;
     let lo = Math.min(...v), hi = Math.max(...v);
     if(tgt){ lo = Math.min(lo, tgt); hi = Math.max(hi, tgt); }
     // never let a flat trace fill the panel with noise: floor the span at 2 deg
@@ -453,7 +472,7 @@ function drawSparks(){
     }
     plot.dataset.sig = sig;
     plot.innerHTML =
-      `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+      `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
          ${tl}
          <path d="${d2}" fill="none" stroke="var(--series-${c.slot})" stroke-width="2"
                stroke-linejoin="round" stroke-linecap="round"/>
@@ -483,7 +502,9 @@ function drawChart(){
   // stretched. It used to be a fixed 1000-unit box with preserveAspectRatio
   // "none", which squashed the labels and the line weights horizontally.
   const box = el("chart");
-  const W = Math.max(360, Math.round(box.clientWidth || 900));
+  // quantised: a one-pixel change must not count as "structure changed" and
+  // rebuild the whole chart
+  const W = Math.max(360, Math.round((box.clientWidth || 900)/8)*8);
   const H = 300, L = 54, R = 12, T = 12, B = 34;
   const series = CH.map(c=>({c, v:(store[c.key]||{}).temperatures||[]}))
                    .filter(s=>s.v.length);
@@ -540,7 +561,7 @@ function drawChart(){
   box.dataset.sig = sig;
   existing?.remove();
   box.insertAdjacentHTML("afterbegin",
-    `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img"
           aria-label="Temperatures over the last ${Math.round(n/60)} minutes">
        ${grid}${ylab}${xlab}${paths}
        <line id="cross" x1="0" y1="${T}" x2="0" y2="${H-B}" stroke="var(--text-muted)"
@@ -765,6 +786,7 @@ class H(http.server.BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin in ORIGINS:                 # exact match, never a wildcard
             self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Vary", "Origin")
 
     def do_OPTIONS(self):
@@ -772,6 +794,14 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST")
         self.send_header("Access-Control-Allow-Headers",
                          "Content-Type, X-K2-Token, X-K2-Filename, X-K2-Start")
+        # PRIVATE NETWORK ACCESS. A page on a public https origin reaching a
+        # private/loopback address gets an extra preflight from Chrome carrying
+        # Access-Control-Request-Private-Network. Without this acknowledgement
+        # the request is simply blocked - which is why the hosted page kept
+        # flashing "not connected" while localhost was perfectly happy.
+        if self.headers.get("Access-Control-Request-Private-Network"):
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "86400")   # stop re-preflighting
         self._cors(); self.end_headers()
 
     def _authed(self):
