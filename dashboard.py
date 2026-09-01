@@ -415,6 +415,37 @@ async function diagnose(){
   out.push("Page origin: " + location.origin);
   return out;
 }
+// Chrome will only show the Local Network Access prompt off a real user
+// gesture - a fetch fired on page load is refused silently. So the request is
+// made from a button, which is what actually surfaces the dialog.
+async function requestAccess(){
+  const b = document.getElementById("grant");
+  if(b){ b.disabled = true; b.textContent = "Connecting…"; }
+  try{
+    await get("status");                     // this is what triggers the prompt
+    misses = 0; pollDelay = 1000;
+    const sp = document.getElementById("setup");
+    if(sp) sp.classList.add("ok");
+    tickTemps();
+  }catch(e){
+    lastErr = (e && e.message) ? e.message : String(e);
+    await showDiagnosis();
+  }finally{
+    if(b){ b.disabled = false; b.textContent = "Connect to my printer"; }
+    showPermState();
+  }
+}
+async function showPermState(){
+  const el2 = document.getElementById("permstate");
+  if(!el2 || !navigator.permissions) return;
+  try{
+    const st = await navigator.permissions.query({name: "local-network-access"});
+    el2.textContent = "browser permission: " + st.state;
+    st.onchange = () => { el2.textContent = "browser permission: " + st.state;
+                          if(st.state === "granted") requestAccess(); };
+  }catch(e){ el2.textContent = ""; }
+}
+
 async function showDiagnosis(){
   const box = document.getElementById("diag");
   if(!box) return;
@@ -790,6 +821,8 @@ fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   CONTROL_ON = !!c.control;
   if(CONTROL_ON) el("controls").hidden = false;
 }).catch(()=>{});
+document.getElementById("grant")?.addEventListener("click", requestAccess);
+showPermState();
 buildTable(); buildSparks(); tick(); tickTemps();
 function drawClock(){
   if(!clock){ return; }
