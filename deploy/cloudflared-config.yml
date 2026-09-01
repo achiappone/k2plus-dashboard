@@ -1,0 +1,17 @@
+# ~/.cloudflared/config.yml on the LAN machine
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create k2
+#   cloudflared tunnel route dns k2 k2.example.com
+#   sudo cloudflared service install
+#
+# The tunnel dials OUT to Cloudflare. Nothing is forwarded on your router and
+# no port is opened. Put Cloudflare Access in front of the hostname to get a
+# real login page - enforced at the edge, before a request reaches your house.
+tunnel: k2
+credentials-file: /home/pi/.cloudflared/k2.json
+
+ingress:
+  - hostname: k2.example.com
+    service: http://localhost:8770
+  - service: http_status:404

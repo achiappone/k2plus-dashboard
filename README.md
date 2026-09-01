@@ -1,0 +1,77 @@
+# K2 Plus dashboard
+
+A single-file dashboard for a Klipper/Moonraker 3D printer — live temperatures,
+progress, and the camera — with a **read-only** proxy in front of the printer.
+
+Built for a Creality K2 Plus, but nothing in it is K2-specific except the
+camera, which is WebRTC rather than the MJPEG most Klipper builds serve.
+
+```sh
+PRINTER_HOST=10.0.0.42 python3 dashboard.py     # then open http://localhost:8770
+```
+
+Python 3 standard library only. No pip install, no Docker, no database.
+
+## What it shows
+
+**Progress** as a headline figure with elapsed and projected remaining time,
+plus Z height, filament used, speed and flow.
+
+**Three temperature charts** — nozzle, bed, chamber — each on its own scale,
+with the target as a dashed line and ten minutes of history. Deliberately three
+charts and not one: 260 °C, 100 °C and 53 °C share no sensible axis, and putting
+them on a dual-axis plot is the single most misleading thing you can do to a
+chart. Hovering gives a crosshair readout, and there is a table view underneath.
+
+**The camera.** On this printer it is WebRTC — port 8000 returns the same
+signalling page for every path and query, so `?action=snapshot` is that page and
+not a JPEG. There is no snapshot endpoint. The dashboard performs the WebRTC
+negotiation itself rather than framing the printer's page, which means the video
+sits in the layout, the connection state is visible instead of failing as a
+black rectangle, and there is a **Save still** button that captures a frame to
+PNG — the snapshot the printer does not offer.
+
+## The proxy is read-only, on purpose
+
+Moonraker sends no CORS headers, so a browser page cannot call it directly. This
+serves the page and proxies the API from the same origin.
+
+That proxy forwards **GET to three status endpoints and nothing else**. It cannot
+set a temperature, move the toolhead, or start, pause or cancel a job. Anything
+else returns 403; any method but GET returns 501.
+
+This matters because **Moonraker has no authentication**. Do not port-forward it.
+Anyone who finds the port can set the hot end to 300 °C and run arbitrary gcode
+on an unattended machine in your house.
+
+## Reaching it from outside
+
+The dashboard has to run on a machine on the same network as the printer — a Pi
+is plenty, a Pi Zero 2 W is enough. The printer's address is private, so nothing
+outside the network can route to it; where the *page* is hosted is irrelevant,
+because what matters is which network the *browser* is on. This is also why it
+cannot be served from GitHub Pages: Pages is HTTPS-only, and browsers
+unconditionally block an HTTPS page from calling a plain-HTTP address.
+
+Two ways to bridge it, neither of which opens a port on your router:
+
+**Tailscale** — put your devices and the Pi on a private overlay network. The
+dashboard is then reachable at a tailnet address from anywhere, with no public
+surface at all. Start here.
+
+**Cloudflare Tunnel + Access** — `cloudflared` dials out from the Pi; Cloudflare
+Access demands a login before any request reaches it. That is a real login page,
+enforced at the edge. Template in `deploy/cloudflared-config.yml`.
+
+You do **not** need nginx for either. `cloudflared` is already the reverse proxy;
+putting nginx in front of it adds a layer that does nothing here.
+
+## Deploy
+
+`deploy/k2-dashboard.service` is a hardened systemd unit — set `PRINTER_HOST`
+and the paths, then:
+
+```sh
+sudo cp deploy/k2-dashboard.service /etc/systemd/system/
+sudo systemctl enable --now k2-dashboard
+```

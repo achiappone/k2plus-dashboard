@@ -1,0 +1,23 @@
+# /etc/systemd/system/k2-dashboard.service
+#   sudo systemctl enable --now k2-dashboard
+[Unit]
+Description=K2 Plus dashboard (read-only Moonraker proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/k2plus-dashboard
+Environment=PRINTER_HOST=10.0.0.42
+ExecStart=/usr/bin/python3 /home/pi/k2plus-dashboard/dashboard.py
+Restart=on-failure
+RestartSec=5
+# it only needs to read; give it nothing else
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
