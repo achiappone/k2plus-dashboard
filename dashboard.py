@@ -34,6 +34,12 @@ OBJECTS = ("print_stats&virtual_sdcard&extruder&heater_bed&toolhead"
 ORIGINS = ("https://achiappone.github.io", "http://localhost:8770",
            "http://127.0.0.1:8770")
 
+# The camera's WebRTC handshake is HTTP, so a hosted HTTPS page cannot POST it
+# directly. Relayed here instead. Only the MEDIA needs to reach the printer, and
+# that is UDP - not subject to mixed-content rules - so it flows browser-to-
+# printer directly once the handshake is done.
+CAMERA_SIGNAL = f"http://{PRINTER}:8000/call/webrtc_local"
+
 ALLOWED = {                                   # the only things the proxy will fetch
     "status":  f"{MOONRAKER}/printer/objects/query?{OBJECTS}",
     "temps":   f"{MOONRAKER}/server/temperature_store?include_monitors=false",
@@ -343,8 +349,29 @@ class H(http.server.BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Methods", "GET")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self._cors(); self.end_headers()
+
+    def do_POST(self):
+        """The ONLY write path, and it goes to the camera's signalling endpoint
+        - never to Moonraker. It cannot command the printer."""
+        if self.path != "/api/camera/offer":
+            self.send_error(403, "not an allowed endpoint"); return
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            if n > 64 * 1024:
+                self.send_error(413, "offer too large"); return
+            req = urllib.request.Request(CAMERA_SIGNAL, data=self.rfile.read(n),
+                                         headers={"Content-Type": "text/plain"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = r.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(data)))
+            self._cors(); self.end_headers(); self.wfile.write(data)
+        except Exception as e:
+            self.send_error(502, str(e))
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):

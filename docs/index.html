@@ -65,9 +65,6 @@ svg{display:block;width:100%;height:64px;overflow:visible}
 .camfoot button:hover{border-color:var(--text-secondary)}
 .camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
 .camfoot button:disabled{opacity:.4;cursor:not-allowed}
-.camoff{aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;
-  text-align:center;padding:26px;color:var(--text-secondary);font-size:13px;line-height:1.6;
-  background:var(--surface-1)}
 .setup{background:var(--surface-1);border:1px solid var(--rule);padding:18px 20px;margin-bottom:20px}
 .setup h2{margin-bottom:8px}
 .setup code{display:block;font-family:"IBM Plex Mono",monospace;font-size:12.5px;
@@ -89,13 +86,13 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 
 <div class="setup" id="setup">
   <h2>Not connected</h2>
-  <p style="margin:0">This page is the UI only. The proxy that talks to your printer
-  runs on your own machine &mdash; start it and this panel disappears.</p>
+  <p style="margin:0">This page is the interface only. The proxy that reaches your
+  printer runs on your own machine &mdash; start it and this panel disappears.</p>
   <code>git clone https://github.com/achiappone/k2plus-dashboard
 cd k2plus-dashboard
 PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
-  <p style="margin:0;font-size:12.5px;color:var(--text-muted)">Talking to
-  <span class="mono" id="proxyaddr"></span>. Different port?
+  <p style="margin:0;font-size:12.5px;color:var(--text-muted)">Using
+  <span class="mono" id="proxyaddr"></span>. Different host or port?
   <a href="#" id="setproxy">Change it</a>.</p>
 </div>
 <div class="grid">
@@ -138,7 +135,7 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
 <script>
 // Served from GitHub Pages, this page has no backend of its own. It calls the
 // proxy running on YOUR machine. localhost is a trustworthy origin, so an HTTPS
-// page is allowed to reach it - the printer's own http:// address is not.
+// page may reach it; the printer's own http:// address may not.
 const PROXY = localStorage.getItem("k2proxy") || "http://localhost:8770";
 const CH = [
   {key:"extruder",                          name:"Nozzle",  slot:1},
@@ -271,7 +268,7 @@ async function tickTemps(){
 // straight from this page. Content-Type stays text/plain so the request is
 // CORS-simple and no preflight is needed - the server only base64-decodes the
 // body, it does not inspect the type.
-const CAM = localStorage.getItem("k2cam") || "";
+const SIGNAL = PROXY + "/api/camera/offer";
 let pc=null;
 function camState(t,c){ el("camtx").textContent=t; el("campill").style.color=c; }
 function connectCam(){
@@ -286,7 +283,7 @@ function connectCam(){
   };
   pc.onicecandidate = ev => {
     if(ev.candidate !== null) return;
-    fetch(CAM+"/call/webrtc_local", {method:"POST", headers:{"Content-Type":"text/plain"},
+    fetch(SIGNAL, {method:"POST", headers:{"Content-Type":"text/plain"},
       body: btoa(JSON.stringify({type:"offer", sdp:pc.localDescription.sdp}))})
       .then(r=>r.text())
       .then(t=>{ const a=JSON.parse(atob(t));
@@ -307,14 +304,7 @@ el("grab").onclick = () => {
   a.download=`k2-${new Date().toISOString().replace(/[:.]/g,"-")}.png`;
   a.href=c.toDataURL("image/png"); a.click();
 };
-if (location.protocol === "https:" && !CAM) {
-  document.querySelector(".camwrap").innerHTML =
-    '<div class="camoff">Camera unavailable from a hosted page.<br>' +
-    'It streams over plain HTTP from a private address, which an HTTPS page ' +
-    'cannot reach. Open the dashboard locally at <b>' + PROXY + '</b> for video.</div>';
-  el("campill").style.display = "none";
-  el("grab").disabled = true; el("recon").disabled = true;
-} else { connectCam(); }
+connectCam();
 
 get("info").then(i=>el("host").textContent=i.hostname+" · "+i.software_version).catch(()=>{});
 el("proxyaddr").textContent = PROXY;
@@ -324,4 +314,24 @@ el("setproxy").onclick = e => { e.preventDefault();
 buildSparks(); tick(); tickTemps();
 setInterval(tick, 2000);
 setInterval(tickTemps, 10000);
-</script></body></html>
+</script></body></html>"""
+
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+
+    def _cors(self):
+        origin = self.headers.get("Origin")
+        if origin in ORIGINS:                 # exact match, never a wildcard
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._cors(); self.end_headers()
+
+    def do_POST(self):
+        """The ONLY write path, and it goes to the camera's signalling endpoint
+        - never to Moonraker. It cannot command the printer.

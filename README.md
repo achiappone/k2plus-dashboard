@@ -109,9 +109,14 @@ It is the UI only — there is no backend behind it. It calls the proxy running 
 This works because browsers treat `http://localhost` as a **trustworthy origin**,
 so an HTTPS page is allowed to call it. The printer's own address gets no such
 exemption: it is plain HTTP on a private IP, which is blocked as mixed content
-from an HTTPS page regardless of which network you are on. That is also why the
-camera panel is disabled on the hosted page — video comes straight from the
-printer, so it only works when you open the dashboard locally.
+from an HTTPS page regardless of which network you are on. The camera still works from the hosted page, because only its **handshake** is
+HTTP — and that is relayed through the local proxy. WebRTC media is UDP and is
+not subject to mixed-content rules, so the video flows browser-to-printer
+directly once the handshake is done.
 
-The proxy allows exactly two origins by exact match, GET only. A page from
-anywhere else gets no CORS header and the browser drops the response.
+The proxy allows exactly two origins by exact match. A page from anywhere else
+gets no CORS header and the browser drops the response.
+
+There is one POST path, `/api/camera/offer`, and it forwards only to the
+camera's signalling endpoint — never to Moonraker. Everything else, any method,
+returns 403.
