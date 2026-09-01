@@ -47,6 +47,11 @@ CAMERA_SIGNAL = f"http://{PRINTER}:8000/call/webrtc_local"
 # Read-only stays the default because that is the safe thing to leave running.
 CONTROL = os.environ.get("K2_CONTROL") == "1"
 
+# Stamped into the page so you can tell at a glance WHICH build you are looking
+# at. Without it, a stale cached copy is indistinguishable from a failed deploy,
+# and you go hunting for a bug that is not there.
+BUILD = __import__("datetime").datetime.now().strftime("%H:%M:%S")
+
 # Every write needs this token in an X-K2-Token header. Two reasons, and the
 # second is the important one:
 #
@@ -103,6 +108,8 @@ header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;
   border-bottom:2px solid var(--text-primary);padding-bottom:12px;margin-bottom:20px}
 h1{font-size:26px;margin:0;letter-spacing:-.01em}
 .host{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted)}
+.build{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--text-muted);
+  border:1px solid var(--rule);padding:2px 8px;white-space:nowrap}
 .pill{margin-left:auto;display:inline-flex;align-items:center;gap:7px;
   border:1px solid currentColor;padding:3px 11px;font-family:"IBM Plex Mono",monospace;
   font-size:12px;letter-spacing:.03em}
@@ -207,6 +214,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
+  <span class="build" id="build" title="which build of this page you are looking at">__BUILD__</span>
 </header>
 
 <div class="grid">
@@ -306,6 +314,15 @@ const CH = [
 const el = id => document.getElementById(id);
 const hm = s => { s=Math.max(0,Math.round(s||0));
   return `${Math.floor(s/3600)}h ${String(Math.floor(s%3600/60)).padStart(2,"0")}m`; };
+// with seconds, and dropping units that are zero so it stays readable
+const hms = s => {
+  s = Math.max(0, Math.round(s||0));
+  const h=Math.floor(s/3600), m=Math.floor(s%3600/60), sec=s%60, p=n=>String(n).padStart(2,"0");
+  return h ? `${h}h ${p(m)}m ${p(sec)}s` : m ? `${m}m ${p(sec)}s` : `${sec}s`;
+};
+// The API is polled every 2 s, so a countdown driven straight off it would jump
+// two seconds at a time. Take a reading, then run the clock locally from it.
+let clock = null;
 let store = {};
 
 function statusColor(st, dev){
@@ -497,7 +514,11 @@ async function tick(){
     el("barfill").style.width = prog+"%";
     const el_=ps.print_duration||0;
     const rem = prog>0.5 ? el_*(100-prog)/prog : null;
-    el("times").textContent = `${hm(el_)} elapsed` + (rem?` · ~${hm(rem)} remaining`:"");
+    clock = (ps.state === "printing")
+      ? {elapsed: el_, remaining: rem, at: Date.now()}
+      : null;
+    if(!clock) el("times").textContent = `${hm(el_)} elapsed`;
+    drawClock();
     el("z").textContent   = (ps.z_pos!=null? ps.z_pos.toFixed(2):"—")+" mm";
     el("fil").textContent = ((ps.filament_used||0)/1000).toFixed(2)+" m";
     el("spd").textContent = Math.round((gm.speed||0)/60)+" mm/s";
@@ -641,6 +662,22 @@ fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   if(CONTROL_ON) el("controls").hidden = false;
 }).catch(()=>{});
 buildTable(); buildSparks(); tick(); tickTemps();
+function drawClock(){
+  if(!clock){ return; }
+  const d = (Date.now() - clock.at)/1000;
+  const parts = [`${hms(clock.elapsed + d)} elapsed`];
+  if(clock.remaining != null){
+    const left = clock.remaining - d;
+    parts.push(left > 0 ? `~${hms(left)} remaining`
+                        : `overdue by ${hms(-left)}`);
+    const done = new Date(Date.now() + Math.max(0,left)*1000);
+    parts.push(`done ~${String(done.getHours()).padStart(2,"0")}:${
+                        String(done.getMinutes()).padStart(2,"0")}`);
+  }
+  el("times").textContent = parts.join(" · ");
+}
+setInterval(drawClock, 1000);
+
 let _rz; addEventListener("resize", () => {
   clearTimeout(_rz); _rz = setTimeout(()=>{ drawChart(); drawSparks(); }, 150);
 });
@@ -757,7 +794,8 @@ class H(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
-            body = PAGE.replace("__CAMERA__", CAMERA).encode()
+            body = (PAGE.replace("__CAMERA__", CAMERA)
+                        .replace("__BUILD__", "local " + BUILD)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

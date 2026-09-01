@@ -9,7 +9,7 @@ NOTE the extraction below uses split, not rsplit. dashboard.py has docstrings
 AFTER the PAGE literal, so splitting on the LAST triple-quote in the file sweeps
 the intervening Python into the page - which is exactly what happened once.
 """
-import pathlib, re
+import pathlib, re, subprocess, datetime
 
 src = pathlib.Path("dashboard.py").read_text()
 page = src.split('PAGE = r"""', 1)[1].split('"""', 1)[0]
@@ -70,6 +70,15 @@ for leak in ("class H(", "http.server", "def do_POST", "BaseHTTPRequestHandler",
 assert page.rstrip().endswith("</html>"), "page does not end at </html>"
 assert "__CAMERA__" not in page, "unreplaced placeholder"
 
+try:
+    sha = subprocess.run(["git","rev-parse","--short","HEAD"], capture_output=True,
+                         text=True).stdout.strip() or "?"
+except Exception:
+    sha = "?"
+stamp = f"{sha} · {datetime.datetime.now(datetime.timezone.utc):%d %b %H:%M} UTC"
+assert "__BUILD__" in page, "build stamp placeholder missing"
+page = page.replace("__BUILD__", stamp)
+
 out = pathlib.Path("docs/index.html")
 out.write_text(page)
-print(f"docs/index.html  {len(page)/1024:.1f} KB  ({page.count(chr(10))+1} lines)")
+print(f"docs/index.html  {len(page)/1024:.1f} KB  ({page.count(chr(10))+1} lines)  stamp: {stamp}")

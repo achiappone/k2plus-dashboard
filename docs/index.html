@@ -247,6 +247,15 @@ const CH = [
 const el = id => document.getElementById(id);
 const hm = s => { s=Math.max(0,Math.round(s||0));
   return `${Math.floor(s/3600)}h ${String(Math.floor(s%3600/60)).padStart(2,"0")}m`; };
+// with seconds, and dropping units that are zero so it stays readable
+const hms = s => {
+  s = Math.max(0, Math.round(s||0));
+  const h=Math.floor(s/3600), m=Math.floor(s%3600/60), sec=s%60, p=n=>String(n).padStart(2,"0");
+  return h ? `${h}h ${p(m)}m ${p(sec)}s` : m ? `${m}m ${p(sec)}s` : `${sec}s`;
+};
+// The API is polled every 2 s, so a countdown driven straight off it would jump
+// two seconds at a time. Take a reading, then run the clock locally from it.
+let clock = null;
 let store = {};
 
 function statusColor(st, dev){
@@ -439,7 +448,11 @@ async function tick(){
     el("barfill").style.width = prog+"%";
     const el_=ps.print_duration||0;
     const rem = prog>0.5 ? el_*(100-prog)/prog : null;
-    el("times").textContent = `${hm(el_)} elapsed` + (rem?` · ~${hm(rem)} remaining`:"");
+    clock = (ps.state === "printing")
+      ? {elapsed: el_, remaining: rem, at: Date.now()}
+      : null;
+    if(!clock) el("times").textContent = `${hm(el_)} elapsed`;
+    drawClock();
     el("z").textContent   = (ps.z_pos!=null? ps.z_pos.toFixed(2):"—")+" mm";
     el("fil").textContent = ((ps.filament_used||0)/1000).toFixed(2)+" m";
     el("spd").textContent = Math.round((gm.speed||0)/60)+" mm/s";
@@ -590,6 +603,22 @@ el("setproxy").onclick = e => { e.preventDefault();
   const v = prompt("Proxy address", PROXY);
   if (v) { localStorage.setItem("k2proxy", v.replace(/\/$/,"")); location.reload(); } };
 buildTable(); tick(); tickTemps();
+function drawClock(){
+  if(!clock){ return; }
+  const d = (Date.now() - clock.at)/1000;
+  const parts = [`${hms(clock.elapsed + d)} elapsed`];
+  if(clock.remaining != null){
+    const left = clock.remaining - d;
+    parts.push(left > 0 ? `~${hms(left)} remaining`
+                        : `overdue by ${hms(-left)}`);
+    const done = new Date(Date.now() + Math.max(0,left)*1000);
+    parts.push(`done ~${String(done.getHours()).padStart(2,"0")}:${
+                        String(done.getMinutes()).padStart(2,"0")}`);
+  }
+  el("times").textContent = parts.join(" · ");
+}
+setInterval(drawClock, 1000);
+
 let _rz; addEventListener("resize", () => {
   clearTimeout(_rz); _rz = setTimeout(()=>{ drawChart(); drawSparks(); }, 150);
 });
