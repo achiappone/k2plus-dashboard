@@ -371,11 +371,16 @@ function statusColor(st, dev){
 }
 
 async function get(what){
-  // Abort rather than let a slow request overlap the next tick and pile up.
   const ac = new AbortController();
   const t = setTimeout(()=>ac.abort(), 4000);
+  const opts = {signal: ac.signal, cache: "no-store"};
+  // Chrome's Local Network Access: a public https page reaching localhost must
+  // declare the request as targeting the local address space, AND the user must
+  // grant permission. Undeclared, every request logs a warning and is refused.
+  // Unknown options are ignored by browsers that do not implement it.
+  if(PROXY && !PROXY.startsWith(location.origin)) opts.targetAddressSpace = "local";
   try{
-    const r = await fetch(PROXY+"/api/"+what, {signal: ac.signal});
+    const r = await fetch(PROXY+"/api/"+what, opts);
     if(!r.ok) throw new Error(what+" "+r.status);
     return (await r.json()).result;
   } finally { clearTimeout(t); }
@@ -394,12 +399,14 @@ async function diagnose(){
   const out = [];
   try{
     await fetch(PROXY+"/api/status", {mode:"no-cors", cache:"no-store"});
-    out.push("The proxy IS reachable, but the browser blocked the reply.");
-    out.push("That is a cross-origin / private-network policy block, not a "
-           + "network fault. Chrome requires the server to acknowledge "
-           + "Access-Control-Allow-Private-Network for a public https page to "
-           + "read a localhost address.");
-    out.push("Use http://localhost:8770 instead - same origin, no policy in the way.");
+    out.push("The proxy IS running. Chrome is refusing to let this page read it.");
+    out.push("Chrome's Local Network Access rule: a page on a public https "
+           + "origin needs your explicit permission before it may reach "
+           + "localhost or a private address.");
+    out.push("Grant it: click the icon at the left of the address bar → Site "
+           + "settings → allow local network access, then reload.");
+    out.push("Or skip the whole restriction and open http://localhost:8770 "
+           + "- same origin, no permission needed, and the camera works there too.");
   }catch(e){
     out.push("The proxy is NOT reachable at " + PROXY + ".");
     out.push("Start it:  K2_CONTROL=1 PRINTER_HOST=<ip> python3 dashboard.py");
@@ -803,8 +810,17 @@ setInterval(drawClock, 1000);
 let _rz; addEventListener("resize", () => {
   clearTimeout(_rz); _rz = setTimeout(()=>{ drawChart(); drawSparks(); }, 150);
 });
-setInterval(tick, 1000);
-setInterval(tickTemps, 30000);
+// Back off when it is failing. A fixed 1 Hz interval kept firing into a
+// blocked endpoint and logged a browser warning every single second - dozens
+// within a minute. Poll fast while healthy, slow down when not.
+let pollDelay = 1000;
+(function loop(){
+  tick().finally(()=>{
+    pollDelay = (misses === 0) ? 1000 : Math.min(pollDelay * 2, 30000);
+    setTimeout(loop, pollDelay);
+  });
+})();
+setInterval(()=>{ if(misses === 0) tickTemps(); }, 30000);
 </script></body></html>"""
 
 
