@@ -31,14 +31,44 @@ sits in the layout, the connection state is visible instead of failing as a
 black rectangle, and there is a **Save still** button that captures a frame to
 PNG — the snapshot the printer does not offer.
 
-## The proxy is read-only, on purpose
+## Controls
+
+Off by default. The dashboard watches; it does not touch anything unless you
+ask it to:
+
+```sh
+K2_CONTROL=1 PRINTER_HOST=10.0.0.42 python3 dashboard.py
+```
+
+That prints a **token**. Paste it into the Controls panel once and it is kept in
+the browser. With control on you get heater targets for nozzle, bed and chamber,
+pause / resume / cancel, and gcode upload with an optional start.
+
+### Why a token and not just CORS
+
+CORS does not stop a hostile page from **sending** a cross-origin POST — it only
+stops it reading the reply. Without a token, any website you happened to visit
+could POST to `localhost:8770` and set your hot end to 300 °C while you were
+out. Requiring a custom header forces a preflight, and the preflight only
+succeeds for the two allowed origins.
+
+Targets are also clamped **server-side** — nozzle 300, bed 120, chamber 60. The
+UI clamps too, but the UI is not the security boundary; anything can talk to
+that port. Uploads must be a bare `*.gcode` name, so nothing can be written
+outside the printer's gcode directory.
+
+Cancelling asks for confirmation, and so does upload-and-start.
+
+## The read path is read-only, on purpose
 
 Moonraker sends no CORS headers, so a browser page cannot call it directly. This
 serves the page and proxies the API from the same origin.
 
-That proxy forwards **GET to three status endpoints and nothing else**. It cannot
-set a temperature, move the toolhead, or start, pause or cancel a job. Anything
-else returns 403; any method but GET returns 501.
+With control off, the proxy forwards **GET to three status endpoints and nothing
+else** — it cannot set a temperature, move the toolhead, or start, pause or
+cancel a job. Anything else returns 403.
+
+That is the default, and it is the right thing to leave running unattended.
 
 This matters because **Moonraker has no authentication**. Do not port-forward it.
 Anyone who finds the port can set the hot end to 300 °C and run arbitrary gcode
