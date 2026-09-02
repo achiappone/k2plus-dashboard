@@ -14,7 +14,8 @@ start/pause/cancel a job even if something asks it to.
     python3 dashboard.py      then open http://localhost:8770
 """
 import http.server, socketserver, urllib.request, urllib.parse, json, os, sys
-import secrets, uuid
+import secrets, uuid, smtplib, ssl, threading, time, re
+from email.message import EmailMessage
 
 # Your printer's address. Override without editing this file:
 #     PRINTER_HOST=10.0.0.42 python3 dashboard.py
@@ -41,6 +42,11 @@ ORIGINS = ("https://achiappone.github.io", "http://localhost:8770",
 # that is UDP - not subject to mixed-content rules - so it flows browser-to-
 # printer directly once the handshake is done.
 CAMERA_SIGNAL = f"http://{PRINTER}:8000/call/webrtc_local"
+# The MJPEG relay: a headless Chromium beside the printer runs ONE WebRTC
+# session and re-serves frames as JPEG. Proxied through here so the page is
+# same-origin, which keeps the tunnel to a single ingress rule and means the
+# printer encodes for one consumer no matter how many people are watching.
+CAM_RELAY = os.environ.get("K2_CAM_RELAY", "http://127.0.0.1:8771")
 
 # ---------------------------------------------------------------- control mode
 # OFF unless you ask for it:  K2_CONTROL=1 python3 dashboard.py
@@ -63,6 +69,15 @@ BUILD = __import__("datetime").datetime.now().strftime("%H:%M:%S")
 #     succeeds for the origins listed above.
 TOKEN = os.environ.get("K2_TOKEN") or secrets.token_urlsafe(12)
 
+# Login. A session cookie replaces the pasted token: the browser sends it on
+# every request by itself, so the page needs no token plumbing at all.
+# Sessions live in memory - restarting the server logs everyone out, which is
+# the right trade for not having to persist anything.
+AUTH_USER = os.environ.get("K2_USER", "")
+AUTH_PASS = os.environ.get("K2_PASS", "")
+LOGIN_REQUIRED = bool(AUTH_USER and AUTH_PASS)
+SESSIONS = set()
+
 # Server-side ceilings. The UI clamps too, but the UI is not the security
 # boundary - anything can talk to this port.
 LIMITS = {"extruder": 300.0, "heater_bed": 120.0,
@@ -80,6 +95,137 @@ ALLOWED = {                                   # the only things the proxy will f
     "temps":   f"{MOONRAKER}/server/temperature_store?include_monitors=false",
     "info":    f"{MOONRAKER}/printer/info",
 }
+
+# ---------------------------------------------------------------- alerts
+# Email when a print goes wrong. Email rather than SMS on purpose: SMS needs a
+# paid gateway, and the one free route - carrier email-to-SMS - is being shut
+# down carrier by carrier, so alerts would fail silently, which is worse than
+# having none. smtplib is stdlib, so this adds no dependency.
+ALERT_FILE = os.environ.get("K2_ALERT_FILE", "/var/lib/k2dash/alerts.json")
+ALERT_POLL = int(os.environ.get("K2_ALERT_POLL", "20"))      # seconds
+SMTP_HOST  = os.environ.get("K2_SMTP_HOST", "")
+SMTP_PORT  = int(os.environ.get("K2_SMTP_PORT", "587"))
+SMTP_USER  = os.environ.get("K2_SMTP_USER", "")
+SMTP_PASS  = os.environ.get("K2_SMTP_PASS", "")
+SMTP_FROM  = os.environ.get("K2_SMTP_FROM", SMTP_USER or "k2@localhost")
+SMTP_TLS   = os.environ.get("K2_SMTP_TLS", "1") == "1"
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def load_recipients():
+    try:
+        with open(ALERT_FILE) as f:
+            return [a for a in json.load(f).get("recipients", []) if EMAIL_RE.match(a)]
+    except Exception:
+        return []
+
+
+def save_recipients(addrs):
+    addrs = [a.strip() for a in addrs if EMAIL_RE.match(a.strip())][:25]
+    d = os.path.dirname(ALERT_FILE)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = ALERT_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"recipients": addrs}, f)
+    os.replace(tmp, ALERT_FILE)          # atomic, so a crash cannot truncate the list
+    return addrs
+
+
+def send_mail(subject, body):
+    """Returns None on success, else a string describing what went wrong."""
+    to = load_recipients()
+    if not to:
+        return "no recipients saved"
+    if not SMTP_HOST:
+        return "K2_SMTP_HOST is not set"
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = ", ".join(to)
+    msg.set_content(body)
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as srv:
+            if SMTP_TLS:
+                srv.starttls(context=ssl.create_default_context())
+            if SMTP_USER:
+                srv.login(SMTP_USER, SMTP_PASS)
+            srv.send_message(msg)
+        return None
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
+
+def _fetch(url):
+    with urllib.request.urlopen(url, timeout=10) as r:
+        return json.load(r)
+
+
+def alert_watcher():
+    """Fire on TRANSITIONS only, so a stuck error state does not mail forever."""
+    last = None
+    while True:
+        try:
+            st = _fetch(ALLOWED["status"])["result"]["status"]
+            info = _fetch(ALLOWED["info"])["result"]
+            ps = st.get("print_stats", {}) or {}
+            cur = (ps.get("state"), info.get("state"))
+            if last is not None and cur != last:
+                why = None
+                if cur[0] == "error" and last[0] != "error":
+                    why = "Print error"
+                elif cur[0] == "cancelled" and last[0] != "cancelled":
+                    why = "Print cancelled"
+                elif cur[1] != "ready" and last[1] == "ready":
+                    why = f"Klipper {cur[1]}"
+                if why:
+                    detail = (ps.get("message") or info.get("state_message") or "").strip()
+                    body = "\n".join([
+                        f"{why} on {info.get('hostname', 'the printer')}.",
+                        "",
+                        f"file:      {ps.get('filename') or '(none)'}",
+                        f"print:     {ps.get('state')}",
+                        f"klipper:   {info.get('state')}",
+                        f"elapsed:   {int(ps.get('print_duration') or 0)}s",
+                        f"detail:    {detail or '(none given)'}",
+                    ])
+                    err = send_mail(f"[K2] {why}", body)
+                    print(f"alert: {why} -> " + (err or f"sent to {len(load_recipients())}"),
+                          flush=True)
+            last = cur
+        except Exception:
+            pass                          # printer unreachable is not itself an alert
+        time.sleep(ALERT_POLL)
+
+
+LOGIN_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>K2 Plus</title>
+<style>
+body{margin:0;background:#0a0f16;color:#fff;font-family:system-ui,sans-serif;
+  display:flex;min-height:100vh;align-items:center;justify-content:center}
+form{background:#1a1a19;border:1px solid #2b333d;padding:26px 28px;width:300px}
+h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 18px;color:#c3c2b7}
+input{width:100%;box-sizing:border-box;background:#0a0f16;color:#fff;border:1px solid #2b333d;
+  padding:9px 10px;margin-bottom:11px;font-size:14px}
+button{width:100%;background:#3987e5;color:#fff;border:0;padding:10px;font-size:14px;cursor:pointer}
+p{color:#e07a72;font-size:13px;min-height:18px;margin:10px 0 0}
+</style></head><body>
+<form id="f"><h1>K2 Plus</h1>
+<input id="u" placeholder="username" autocomplete="username" autofocus>
+<input id="p" type="password" placeholder="password" autocomplete="current-password">
+<button>Sign in</button><p id="e"></p></form>
+<script>
+document.getElementById("f").onsubmit = async ev => {
+  ev.preventDefault();
+  const r = await fetch("/api/login", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({u:document.getElementById("u").value,
+                          p:document.getElementById("p").value})});
+  if (r.ok) location.reload();
+  else document.getElementById("e").textContent = "wrong username or password";
+};
+</script></body></html>"""
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -123,7 +269,24 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 .grid>*{min-width:0}
 .sparks>*{min-width:0}
 .card{contain:layout}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
+@media(max-width:900px){
+  /* One column, and `display:contents` on the two column wrappers promotes the
+     cards themselves to flex items so they can be interleaved. Without it the
+     camera could only ever sit after the whole left-hand column. */
+  .grid{grid-template-columns:1fr;display:flex;flex-direction:column;gap:20px}
+  .grid > div{display:contents}
+  .grid .card{order:3}
+  .grid #progresscard{order:1}
+  .grid #camcard{order:2}
+  /* Compact the progress card: on a phone the 54px readout and the four-across
+     tile strip eat most of the first screen before the camera is reached. */
+  #progresscard{padding:12px 14px}
+  #progresscard .hero{gap:10px;margin-bottom:2px}
+  #progresscard .hero .big{font-size:34px;min-width:4.4ch}
+  #progresscard .hero .sub{font-size:12px;padding-bottom:4px}
+  #progresscard .bar{height:6px;margin:10px 0 3px}
+  #progresscard .tiles{grid-template-columns:repeat(2,1fr);margin-top:12px}
+}
 .card{background:var(--surface-1);border:1px solid var(--rule);padding:16px 18px}
 h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);
   margin:0 0 14px;font-weight:600}
@@ -215,6 +378,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .tokrow{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;
   padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--rule-2)}
 .ctlgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+#alerts{margin-top:20px}
+#alerts textarea{width:100%;background:var(--bg);color:var(--text-primary);
+  border:1px solid var(--rule);padding:9px 10px;font-size:13px;line-height:1.6;
+  font-family:"IBM Plex Mono",monospace;resize:vertical}
+#alerts textarea:focus{outline:none;border-color:var(--series-1)}
 .ctlset{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center}
 .ctlrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
 .filelbl{display:inline-flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;
@@ -238,7 +406,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 
 <div class="grid">
   <div>
-    <div class="card">
+    <div class="card" id="progresscard">
       <h2>Progress</h2>
       <div class="hero"><span class="big" id="pct">—</span>
         <span class="sub" id="fname">—</span></div>
@@ -271,12 +439,6 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 
     <div class="card ctl" id="controls" hidden>
       <h2>Controls</h2>
-      <div class="tokrow" id="tokrow">
-        <label for="tok">Token</label>
-        <input id="tok" type="password" placeholder="printed when you start with K2_CONTROL=1"
-               autocomplete="off" spellcheck="false">
-        <button id="savetok">Save</button>
-      </div>
       <p class="note" style="margin:0 0 4px">Set temperatures in the
       <b>Target</b> column of the Thermals table &mdash; type a value and press Enter.</p>
       <div class="ctlrow">
@@ -292,24 +454,29 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
       </div>
       <p class="msg" id="ctlmsg"></p>
     </div>
-    <details><summary>Show the numbers as a table</summary>
-      <table><thead><tr><th>Heater</th><th class="n">Now</th><th class="n">Target</th>
-      <th class="n">Min (10 min)</th><th class="n">Max</th></tr></thead>
-      <tbody id="tbody"></tbody></table></details>
   </div>
   <div>
-    <div class="card" style="padding:0">
-      <div class="camwrap"><video class="cam" id="cam" autoplay muted playsinline></video></div>
+    <div class="card" id="camcard" style="padding:0">
+      <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
     </div>
     <div class="camfoot">
       <span class="pill" id="campill"><span class="dot"></span><span id="camtx">connecting</span></span>
       <button id="grab">Save still</button>
       <button id="recon">Reconnect</button>
     </div>
-    <p class="note">The camera is WebRTC &mdash; there is no snapshot endpoint. Port 8000
-    returns the same signalling page for every path and query, so
-    <span class="mono">?action=snapshot</span> is that page too, not a JPEG. This panel does
-    the negotiation itself, which is why the video sits in the layout instead of a frame.</p>
+  </div>
+</div>
+
+<div class="card" id="alerts">
+  <h2>Failure alerts</h2>
+  <p class="note" style="margin:-6px 0 12px">Email these addresses when a print errors, is
+  cancelled, or Klipper shuts down. One per line.</p>
+  <textarea id="alertlist" rows="4" spellcheck="false" autocomplete="off"
+            placeholder="you@example.com"></textarea>
+  <div class="ctlrow" style="margin-top:10px">
+    <button id="savealerts">Save</button>
+    <button id="testalert">Send test</button>
+    <span class="msg" id="alertmsg"></span>
   </div>
 </div>
 </div>
@@ -353,7 +520,14 @@ const HISTORY = 600;
 function pushSample(st){
   CH.forEach(c=>{
     const o = st[c.key]; if(!o || o.temperature==null) return;
-    const d = store[c.key] || (store[c.key] = {temperatures: [], targets: []});
+    // Moonraker's temperature_store returns different shapes per object type:
+    // heaters and temperature_fans carry targets, a plain temperature_sensor
+    // carries only temperatures. The old fallback only fired when the key was
+    // absent entirely, so a pre-populated sensor entry reached d.targets.push()
+    // with targets undefined and threw, aborting the whole tick.
+    const d = store[c.key] || (store[c.key] = {});
+    if(!d.temperatures) d.temperatures = [];
+    if(!d.targets)      d.targets      = [];
     d.temperatures.push(o.temperature);
     d.targets.push(o.target ?? null);
     if(d.temperatures.length > HISTORY){ d.temperatures.shift(); d.targets.shift(); }
@@ -737,41 +911,31 @@ function chartFail(text, where){
 // straight from this page. Content-Type stays text/plain so the request is
 // CORS-simple and no preflight is needed - the server only base64-decodes the
 // body, it does not inspect the type.
-const CAM = "__CAMERA__";
-let pc=null;
+const CAM = "";
+// Frames come from the relay in this container, not from WebRTC in your browser.
+// WebRTC could never work off-LAN here: the printer offers only STUN, so there
+// is no reachable media path from outside and the video stayed black. The relay
+// runs the WebRTC leg next to the printer and re-serves MJPEG, which tunnels
+// fine - and means the printer encodes once, not once per viewer.
 function camState(t,c){ el("camtx").textContent=t; el("campill").style.color=c; }
 function connectCam(){
-  if(pc){ try{pc.close();}catch(e){} }
-  pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
   camState("connecting","var(--text-muted)");
-  pc.ontrack = e => { el("cam").srcObject = e.streams[0]; };
-  pc.oniceconnectionstatechange = () => {
-    const s=pc.iceConnectionState;
-    camState(s, (s==="connected"||s==="completed") ? "var(--good)"
-             : (s==="failed"||s==="disconnected") ? "var(--crit)" : "var(--text-muted)");
-  };
-  pc.onicecandidate = ev => {
-    if(ev.candidate !== null) return;
-    fetch(CAM+"/call/webrtc_local", {method:"POST", headers:{"Content-Type":"text/plain"},
-      body: btoa(JSON.stringify({type:"offer", sdp:pc.localDescription.sdp}))})
-      .then(r=>r.text())
-      .then(t=>{ const a=JSON.parse(atob(t));
-                 if(a.type==="answer") pc.setRemoteDescription(new RTCSessionDescription(a)); })
-      .catch(()=>camState("signalling failed","var(--crit)"));
-  };
-  pc.addTransceiver("video",{direction:"sendrecv"});
-  pc.createOffer().then(d=>pc.setLocalDescription(d))
-    .catch(()=>camState("offer failed","var(--crit)"));
+  const img = el("cam");
+  img.onload  = () => camState("live","var(--good)");
+  img.onerror = () => camState("no stream","var(--crit)");
+  img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
 el("recon").onclick = connectCam;
-el("grab").onclick = () => {
-  const v=el("cam"); if(!v.videoWidth) return;
-  const c=document.createElement("canvas");
-  c.width=v.videoWidth; c.height=v.videoHeight;
-  c.getContext("2d").drawImage(v,0,0);
-  const a=document.createElement("a");
-  a.download=`k2-${new Date().toISOString().replace(/[:.]/g,"-")}.png`;
-  a.href=c.toDataURL("image/png"); a.click();
+el("grab").onclick = async () => {
+  try{
+    const r = await fetch(CAM + "/camera/snapshot?t=" + Date.now());
+    if(!r.ok) throw new Error("no frame available");
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a");
+    a.download = `k2-${new Date().toISOString().replace(/[:.]/g,"-")}.jpg`;
+    a.href = url; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  }catch(e){ camState("grab failed","var(--crit)"); }
 };
 connectCam();
 
@@ -780,19 +944,13 @@ connectCam();
 // listening: CORS would not stop a hostile page POSTing here, but a custom
 // header forces a preflight that only the allowed origins pass.
 let CONTROL_ON = false;
-let TOKEN = localStorage.getItem("k2token") || "";
-el("tok").value = TOKEN;
 function msg(t, cls){ const m=el("ctlmsg"); m.textContent=t; m.className="msg "+(cls||""); }
-el("savetok").onclick = () => {
-  TOKEN = el("tok").value.trim(); localStorage.setItem("k2token", TOKEN);
-  msg(TOKEN ? "token saved" : "token cleared", "ok");
-};
 async function send(action, body, extra){
-  if(!TOKEN){ msg("enter the token printed by the server", "err"); return null; }
   try{
     const r = await fetch(PROXY+"/api/control/"+action, {method:"POST",
-      headers:Object.assign({"Content-Type":"application/json","X-K2-Token":TOKEN}, extra||{}),
+      headers:Object.assign({"Content-Type":"application/json"}, extra||{}),
       body: body});
+    if(r.status === 401){ location.reload(); return null; }
     const j = await r.json().catch(()=>({}));
     if(!r.ok){ msg(j.error || ("HTTP "+r.status), "err"); return null; }
     return j;
@@ -859,6 +1017,52 @@ let pollDelay = 1000;
   });
 })();
 setInterval(()=>{ if(misses === 0) tickTemps(); }, 30000);
+
+// ---- failure alerts -------------------------------------------------------
+// The address list is token gated on the server, so nothing loads until the
+// control token is present. Everything here degrades to a message rather than
+// throwing, since a broken handler in this file would take the poll loop down.
+const alertMsg = (t, cls) => {
+  const e = el("alertmsg"); if(!e) return;
+  e.textContent = t || ""; e.className = "msg " + (cls || "");
+};
+async function alertsLoad(){
+  try{
+    const r = await fetch("/api/alerts");
+    if(r.status === 401){ location.reload(); return; }
+    const j = await r.json();
+    el("alertlist").value = (j.recipients || []).join("\n");
+    alertMsg(j.smtp_configured ? "" : "server has no SMTP configured yet",
+             j.smtp_configured ? "" : "err");
+  }catch(e){ alertMsg(String(e), "err"); }
+}
+async function alertsPost(action, body){
+  const r = await fetch("/api/control/" + action, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body || {})});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+el("savealerts").onclick = async () => {
+  const list = el("alertlist").value.split(/[\s,;]+/).filter(Boolean);
+  try{
+    const j = await alertsPost("alerts", {recipients: list});
+    el("alertlist").value = j.recipients.join("\n");
+    const n = j.recipients.length;
+    alertMsg("saved " + n + " address" + (n === 1 ? "" : "es")
+             + (n < list.length ? " (" + (list.length - n) + " rejected)" : ""), "ok");
+  }catch(e){ alertMsg(String(e.message || e), "err"); }
+};
+el("testalert").onclick = async () => {
+  alertMsg("sending...");
+  try{
+    const j = await alertsPost("alerts-test", {});
+    alertMsg("test sent to " + j.sent, "ok");
+  }catch(e){ alertMsg(String(e.message || e), "err"); }
+};
+alertsLoad();
 </script></body></html>"""
 
 
@@ -887,9 +1091,18 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")   # stop re-preflighting
         self._cors(); self.end_headers()
 
+    def _session_ok(self):
+        """A valid session cookie, or the token header for scripts and curl."""
+        if not LOGIN_REQUIRED:
+            return True
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "k2s" and v in SESSIONS:
+                return True
+        return secrets.compare_digest(self.headers.get("X-K2-Token", ""), TOKEN)
+
     def _authed(self):
-        return CONTROL and secrets.compare_digest(
-            self.headers.get("X-K2-Token", ""), TOKEN)
+        return CONTROL and self._session_ok()
 
     def _moonraker(self, path, data=None, ctype=None):
         req = urllib.request.Request(MOONRAKER + path, data=data, method="POST")
@@ -905,6 +1118,43 @@ class H(http.server.BaseHTTPRequestHandler):
         self._cors(); self.end_headers(); self.wfile.write(body)
 
     def do_POST(self):
+        if self.path == "/api/login":
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                b = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                b = {}
+            ok = (LOGIN_REQUIRED
+                  and secrets.compare_digest(str(b.get("u", "")), AUTH_USER)
+                  and secrets.compare_digest(str(b.get("p", "")), AUTH_PASS))
+            if not ok:
+                return self._json(401, {"error": "bad credentials"})
+            sid = secrets.token_urlsafe(32)
+            SESSIONS.add(sid)
+            body = json.dumps({"ok": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            # SameSite=Strict is the CSRF defence: the browser will not attach
+            # this cookie to a request another site initiated.
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+            self.send_header("Set-Cookie",
+                             f"k2s={sid}; HttpOnly; SameSite=Strict; Path=/{secure}")
+            self.end_headers(); self.wfile.write(body); return
+
+        if self.path == "/api/logout":
+            for part in self.headers.get("Cookie", "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "k2s":
+                    SESSIONS.discard(v)
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.send_header("Set-Cookie", "k2s=; Max-Age=0; Path=/")
+            self.end_headers(); return
+
+        if not self._session_ok():
+            return self._json(401, {"error": "not signed in"})
+
         if self.path == "/api/camera/offer":
             return self._camera_offer()
         if not self.path.startswith("/api/control/"):
@@ -955,11 +1205,54 @@ class H(http.server.BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, "uploaded": name, "started": start,
                                         "moonraker": json.loads(out or b"{}")})
 
+            if action == "alerts":
+                b = json.loads(raw or b"{}")
+                saved = save_recipients(b.get("recipients") or [])
+                return self._json(200, {"ok": True, "recipients": saved})
+
+            if action == "alerts-test":
+                err = send_mail("[K2] test alert",
+                                "This is a test from the K2 Plus dashboard.\n"
+                                "If you got this, failure alerts will reach you.")
+                if err:
+                    # 400, not 502: Cloudflare replaces an origin 5xx with its own
+                    # branded error page, which swallowed this message entirely and
+                    # left the UI showing a bare "HTTP 502". A 4xx passes through.
+                    return self._json(400, {"error": err})
+                return self._json(200, {"ok": True, "sent": len(load_recipients())})
+
             return self._json(403, {"error": f"unknown action {action!r}"})
         except urllib.error.HTTPError as e:
             return self._json(502, {"error": f"moonraker {e.code}: {e.read()[:200].decode(errors='replace')}"})
         except Exception as e:
             return self._json(502, {"error": str(e)})
+
+    def _camera_proxy(self):
+        """Stream the relay through, chunk by chunk.
+
+        MJPEG never ends, so this loop runs for as long as the viewer watches -
+        which is only safe because the server is threaded. A viewer closing the
+        tab surfaces as a broken pipe, which is expected, not an error.
+        """
+        try:
+            with urllib.request.urlopen(CAM_RELAY + self.path, timeout=15) as r:
+                self.send_response(200)
+                self.send_header("Content-Type",
+                                 r.headers.get("Content-Type", "application/octet-stream"))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                while True:
+                    chunk = r.read(16384)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            try:
+                self.send_error(502, f"camera relay: {e}")
+            except Exception:
+                pass
 
     def _camera_offer(self):
         try:
@@ -978,6 +1271,18 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_error(502, str(e))
 
     def do_GET(self):
+        # FIRST, before any route. It used to sit further down, after the "/"
+        # handler had already returned the dashboard - so an unauthenticated
+        # page loaded, its JS got 401 from the API, reloaded, and looped.
+        if not self._session_ok():
+            if self.path.startswith("/api/"):
+                self._json(401, {"error": "not signed in"}); return
+            body = LOGIN_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers(); self.wfile.write(body); return
         if self.path in ("/", "/index.html"):
             body = (PAGE.replace("__CAMERA__", CAMERA)
                         .replace("__BUILD__", "local " + BUILD)).encode()
@@ -993,6 +1298,16 @@ class H(http.server.BaseHTTPRequestHandler):
             # says WHETHER control is on. Never the token.
             self._json(200, {"control": CONTROL,
                              "limits": LIMITS if CONTROL else {}})
+            return
+        if self.path.startswith("/camera/"):
+            return self._camera_proxy()
+        if self.path == "/api/alerts":
+            # Token gated: the saved addresses are personal data, and every other
+            # read on this server is open.
+            if not self._authed():
+                self._json(401, {"error": "bad or missing X-K2-Token"}); return
+            self._json(200, {"recipients": load_recipients(),
+                             "smtp_configured": bool(SMTP_HOST)})
             return
         if self.path.startswith("/api/"):
             key = self.path[5:]
@@ -1020,6 +1335,7 @@ if __name__ == "__main__":
     class Srv(socketserver.ThreadingTCPServer):
         daemon_threads = True
         allow_reuse_address = True
+    threading.Thread(target=alert_watcher, daemon=True).start()
     with Srv(("127.0.0.1", PORT), H) as srv:
         banner = [f"dashboard  http://localhost:{PORT}",
                   f"printer    {MOONRAKER}   camera {CAMERA}",
@@ -1027,8 +1343,8 @@ if __name__ == "__main__":
         if CONTROL:
             banner += ["",
                        "CONTROL IS ON - this instance can set heaters and stop prints.",
-                       f"  token  {TOKEN}",
-                       "  paste that into the dashboard's Controls panel once.",
+                       "  sign in at the page; the browser keeps a session cookie.",
+                       "  scripts can still use X-K2-Token, value in K2_TOKEN.",
                        f"  limits nozzle<={LIMITS['extruder']:.0f}  "
                        f"bed<={LIMITS['heater_bed']:.0f}  "
                        f"chamber<={LIMITS['chamber_heater']:.0f}"]
