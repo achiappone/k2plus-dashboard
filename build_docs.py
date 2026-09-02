@@ -20,12 +20,9 @@ R = [
   '// localhost is a trustworthy origin, so an HTTPS page may reach it; the\n'
   "// printer's own http:// address may not.\n"
   'const PROXY = localStorage.getItem("k2proxy") || "http://localhost:8770";'),
- ('const CAM = "__CAMERA__";',
-  '// Only the WebRTC handshake is HTTP, and it is relayed by the proxy. The\n'
-  '// media itself is UDP, straight to the printer, and not mixed content.\n'
-  'const SIGNAL = PROXY + "/api/camera/offer";'),
- ('fetch(CAM+"/call/webrtc_local", {method:"POST", headers:{"Content-Type":"text/plain"},',
-  'fetch(SIGNAL, {method:"POST", headers:{"Content-Type":"text/plain"},'),
+ ('const CAM = "";',
+  '// Frames come from the MJPEG relay behind YOUR proxy, not from this page.\n'
+  'const CAM = PROXY;'),
  ('.camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}',
   '.camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}\n'
   '.setup{background:var(--surface-1);border:1px solid var(--rule);padding:18px 20px;margin-bottom:20px}\n'

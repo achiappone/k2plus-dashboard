@@ -40,7 +40,24 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 .grid>*{min-width:0}
 .sparks>*{min-width:0}
 .card{contain:layout}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
+@media(max-width:900px){
+  /* One column, and `display:contents` on the two column wrappers promotes the
+     cards themselves to flex items so they can be interleaved. Without it the
+     camera could only ever sit after the whole left-hand column. */
+  .grid{grid-template-columns:1fr;display:flex;flex-direction:column;gap:20px}
+  .grid > div{display:contents}
+  .grid .card{order:3}
+  .grid #progresscard{order:1}
+  .grid #camcard{order:2}
+  /* Compact the progress card: on a phone the 54px readout and the four-across
+     tile strip eat most of the first screen before the camera is reached. */
+  #progresscard{padding:12px 14px}
+  #progresscard .hero{gap:10px;margin-bottom:2px}
+  #progresscard .hero .big{font-size:34px;min-width:4.4ch}
+  #progresscard .hero .sub{font-size:12px;padding-bottom:4px}
+  #progresscard .bar{height:6px;margin:10px 0 3px}
+  #progresscard .tiles{grid-template-columns:repeat(2,1fr);margin-top:12px}
+}
 .card{background:var(--surface-1);border:1px solid var(--rule);padding:16px 18px}
 h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);
   margin:0 0 14px;font-weight:600}
@@ -137,6 +154,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .tokrow{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;
   padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--rule-2)}
 .ctlgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+#alerts{margin-top:20px}
+#alerts textarea{width:100%;background:var(--bg);color:var(--text-primary);
+  border:1px solid var(--rule);padding:9px 10px;font-size:13px;line-height:1.6;
+  font-family:"IBM Plex Mono",monospace;resize:vertical}
+#alerts textarea:focus{outline:none;border-color:var(--series-1)}
 .ctlset{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center}
 .ctlrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}
 .filelbl{display:inline-flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;
@@ -155,7 +177,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">1802edd · 01 Sep 19:10 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">3e6ba04 · 02 Sep 22:50 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -174,7 +196,7 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
 </div>
 <div class="grid">
   <div>
-    <div class="card">
+    <div class="card" id="progresscard">
       <h2>Progress</h2>
       <div class="hero"><span class="big" id="pct">—</span>
         <span class="sub" id="fname">—</span></div>
@@ -207,12 +229,6 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
 
     <div class="card ctl" id="controls" hidden>
       <h2>Controls</h2>
-      <div class="tokrow" id="tokrow">
-        <label for="tok">Token</label>
-        <input id="tok" type="password" placeholder="printed when you start with K2_CONTROL=1"
-               autocomplete="off" spellcheck="false">
-        <button id="savetok">Save</button>
-      </div>
       <p class="note" style="margin:0 0 4px">Set temperatures in the
       <b>Target</b> column of the Thermals table &mdash; type a value and press Enter.</p>
       <div class="ctlrow">
@@ -228,24 +244,29 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
       </div>
       <p class="msg" id="ctlmsg"></p>
     </div>
-    <details><summary>Show the numbers as a table</summary>
-      <table><thead><tr><th>Heater</th><th class="n">Now</th><th class="n">Target</th>
-      <th class="n">Min (10 min)</th><th class="n">Max</th></tr></thead>
-      <tbody id="tbody"></tbody></table></details>
   </div>
   <div>
-    <div class="card" style="padding:0">
-      <div class="camwrap"><video class="cam" id="cam" autoplay muted playsinline></video></div>
+    <div class="card" id="camcard" style="padding:0">
+      <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
     </div>
     <div class="camfoot">
       <span class="pill" id="campill"><span class="dot"></span><span id="camtx">connecting</span></span>
       <button id="grab">Save still</button>
       <button id="recon">Reconnect</button>
     </div>
-    <p class="note">The camera is WebRTC &mdash; there is no snapshot endpoint. Port 8000
-    returns the same signalling page for every path and query, so
-    <span class="mono">?action=snapshot</span> is that page too, not a JPEG. This panel does
-    the negotiation itself, which is why the video sits in the layout instead of a frame.</p>
+  </div>
+</div>
+
+<div class="card" id="alerts">
+  <h2>Failure alerts</h2>
+  <p class="note" style="margin:-6px 0 12px">Email these addresses when a print errors, is
+  cancelled, or Klipper shuts down. One per line.</p>
+  <textarea id="alertlist" rows="4" spellcheck="false" autocomplete="off"
+            placeholder="you@example.com"></textarea>
+  <div class="ctlrow" style="margin-top:10px">
+    <button id="savealerts">Save</button>
+    <button id="testalert">Send test</button>
+    <span class="msg" id="alertmsg"></span>
   </div>
 </div>
 </div>
@@ -292,7 +313,14 @@ const HISTORY = 600;
 function pushSample(st){
   CH.forEach(c=>{
     const o = st[c.key]; if(!o || o.temperature==null) return;
-    const d = store[c.key] || (store[c.key] = {temperatures: [], targets: []});
+    // Moonraker's temperature_store returns different shapes per object type:
+    // heaters and temperature_fans carry targets, a plain temperature_sensor
+    // carries only temperatures. The old fallback only fired when the key was
+    // absent entirely, so a pre-populated sensor entry reached d.targets.push()
+    // with targets undefined and threw, aborting the whole tick.
+    const d = store[c.key] || (store[c.key] = {});
+    if(!d.temperatures) d.temperatures = [];
+    if(!d.targets)      d.targets      = [];
     d.temperatures.push(o.temperature);
     d.targets.push(o.target ?? null);
     if(d.temperatures.length > HISTORY){ d.temperatures.shift(); d.targets.shift(); }
@@ -677,43 +705,32 @@ function chartFail(text, where){
 // straight from this page. Content-Type stays text/plain so the request is
 // CORS-simple and no preflight is needed - the server only base64-decodes the
 // body, it does not inspect the type.
-// Only the WebRTC handshake is HTTP, and it is relayed by the proxy. The
-// media itself is UDP, straight to the printer, and not mixed content.
-const SIGNAL = PROXY + "/api/camera/offer";
-let pc=null;
+// Frames come from the MJPEG relay behind YOUR proxy, not from this page.
+const CAM = PROXY;
+// Frames come from the relay in this container, not from WebRTC in your browser.
+// WebRTC could never work off-LAN here: the printer offers only STUN, so there
+// is no reachable media path from outside and the video stayed black. The relay
+// runs the WebRTC leg next to the printer and re-serves MJPEG, which tunnels
+// fine - and means the printer encodes once, not once per viewer.
 function camState(t,c){ el("camtx").textContent=t; el("campill").style.color=c; }
 function connectCam(){
-  if(pc){ try{pc.close();}catch(e){} }
-  pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
   camState("connecting","var(--text-muted)");
-  pc.ontrack = e => { el("cam").srcObject = e.streams[0]; };
-  pc.oniceconnectionstatechange = () => {
-    const s=pc.iceConnectionState;
-    camState(s, (s==="connected"||s==="completed") ? "var(--good)"
-             : (s==="failed"||s==="disconnected") ? "var(--crit)" : "var(--text-muted)");
-  };
-  pc.onicecandidate = ev => {
-    if(ev.candidate !== null) return;
-    fetch(SIGNAL, {method:"POST", headers:{"Content-Type":"text/plain"},
-      body: btoa(JSON.stringify({type:"offer", sdp:pc.localDescription.sdp}))})
-      .then(r=>r.text())
-      .then(t=>{ const a=JSON.parse(atob(t));
-                 if(a.type==="answer") pc.setRemoteDescription(new RTCSessionDescription(a)); })
-      .catch(()=>camState("signalling failed","var(--crit)"));
-  };
-  pc.addTransceiver("video",{direction:"sendrecv"});
-  pc.createOffer().then(d=>pc.setLocalDescription(d))
-    .catch(()=>camState("offer failed","var(--crit)"));
+  const img = el("cam");
+  img.onload  = () => camState("live","var(--good)");
+  img.onerror = () => camState("no stream","var(--crit)");
+  img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
 el("recon").onclick = connectCam;
-el("grab").onclick = () => {
-  const v=el("cam"); if(!v.videoWidth) return;
-  const c=document.createElement("canvas");
-  c.width=v.videoWidth; c.height=v.videoHeight;
-  c.getContext("2d").drawImage(v,0,0);
-  const a=document.createElement("a");
-  a.download=`k2-${new Date().toISOString().replace(/[:.]/g,"-")}.png`;
-  a.href=c.toDataURL("image/png"); a.click();
+el("grab").onclick = async () => {
+  try{
+    const r = await fetch(CAM + "/camera/snapshot?t=" + Date.now());
+    if(!r.ok) throw new Error("no frame available");
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a");
+    a.download = `k2-${new Date().toISOString().replace(/[:.]/g,"-")}.jpg`;
+    a.href = url; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  }catch(e){ camState("grab failed","var(--crit)"); }
 };
 connectCam();
 
@@ -722,19 +739,13 @@ connectCam();
 // listening: CORS would not stop a hostile page POSTing here, but a custom
 // header forces a preflight that only the allowed origins pass.
 let CONTROL_ON = false;
-let TOKEN = localStorage.getItem("k2token") || "";
-el("tok").value = TOKEN;
 function msg(t, cls){ const m=el("ctlmsg"); m.textContent=t; m.className="msg "+(cls||""); }
-el("savetok").onclick = () => {
-  TOKEN = el("tok").value.trim(); localStorage.setItem("k2token", TOKEN);
-  msg(TOKEN ? "token saved" : "token cleared", "ok");
-};
 async function send(action, body, extra){
-  if(!TOKEN){ msg("enter the token printed by the server", "err"); return null; }
   try{
     const r = await fetch(PROXY+"/api/control/"+action, {method:"POST",
-      headers:Object.assign({"Content-Type":"application/json","X-K2-Token":TOKEN}, extra||{}),
+      headers:Object.assign({"Content-Type":"application/json"}, extra||{}),
       body: body});
+    if(r.status === 401){ location.reload(); return null; }
     const j = await r.json().catch(()=>({}));
     if(!r.ok){ msg(j.error || ("HTTP "+r.status), "err"); return null; }
     return j;
@@ -807,4 +818,50 @@ let pollDelay = 1000;
   });
 })();
 setInterval(()=>{ if(misses === 0) tickTemps(); }, 30000);
+
+// ---- failure alerts -------------------------------------------------------
+// The address list is token gated on the server, so nothing loads until the
+// control token is present. Everything here degrades to a message rather than
+// throwing, since a broken handler in this file would take the poll loop down.
+const alertMsg = (t, cls) => {
+  const e = el("alertmsg"); if(!e) return;
+  e.textContent = t || ""; e.className = "msg " + (cls || "");
+};
+async function alertsLoad(){
+  try{
+    const r = await fetch("/api/alerts");
+    if(r.status === 401){ location.reload(); return; }
+    const j = await r.json();
+    el("alertlist").value = (j.recipients || []).join("\n");
+    alertMsg(j.smtp_configured ? "" : "server has no SMTP configured yet",
+             j.smtp_configured ? "" : "err");
+  }catch(e){ alertMsg(String(e), "err"); }
+}
+async function alertsPost(action, body){
+  const r = await fetch("/api/control/" + action, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body || {})});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+el("savealerts").onclick = async () => {
+  const list = el("alertlist").value.split(/[\s,;]+/).filter(Boolean);
+  try{
+    const j = await alertsPost("alerts", {recipients: list});
+    el("alertlist").value = j.recipients.join("\n");
+    const n = j.recipients.length;
+    alertMsg("saved " + n + " address" + (n === 1 ? "" : "es")
+             + (n < list.length ? " (" + (list.length - n) + " rejected)" : ""), "ok");
+  }catch(e){ alertMsg(String(e.message || e), "err"); }
+};
+el("testalert").onclick = async () => {
+  alertMsg("sending...");
+  try{
+    const j = await alertsPost("alerts-test", {});
+    alertMsg("test sent to " + j.sent, "ok");
+  }catch(e){ alertMsg(String(e.message || e), "err"); }
+};
+alertsLoad();
 </script></body></html>
