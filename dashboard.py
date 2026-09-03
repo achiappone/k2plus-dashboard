@@ -100,7 +100,8 @@ ALLOWED = {                                   # the only things the proxy will f
     "gcode":   f"{MOONRAKER}/server/gcode_store?count=200",
     # The CFS inventory. This lives in Klipper, not on Creality's private
     # channel on 9999 - that one only carries summary fields like cfsConnect.
-    "box":     f"{MOONRAKER}/printer/objects/query?box",
+    "box":     (f"{MOONRAKER}/printer/objects/query?box"
+                "&filament_switch_sensor%20filament_sensor"),
     "files":   f"{MOONRAKER}/server/files/list?root=gcodes",
     "history": f"{MOONRAKER}/server/history/list?limit=12&order=desc",
 }
@@ -511,6 +512,10 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .slot .pct{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-secondary);
   margin-top:5px;font-variant-numeric:tabular-nums}
 .slot.empty{opacity:.45}
+.slot.ext{border-left:2px solid var(--rule)}
+.slot .st{font-size:12px;color:var(--text-secondary)}
+.slot .st.on{color:var(--good)}
+.slot .warn{font-size:11px;color:var(--warn);margin:6px 0 0}
 .flist{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
 .frow{background:var(--surface-1);padding:9px 13px;display:flex;justify-content:space-between;
   gap:14px;align-items:baseline}
@@ -1231,7 +1236,8 @@ async function tickCfs(){
   try{
     const r = await fetch(PROXY + "/api/box");
     if(r.status === 401){ location.reload(); return; }
-    const b = (await r.json()).result.status.box || {};
+    const st = (await r.json()).result.status || {};
+    const b = st.box || {};
     const names = {};
     for(const g of (b.same_material || [])) names[g[0]] = g[3];
     const box = b.T1 || {};
@@ -1258,6 +1264,26 @@ async function tickCfs(){
           : `<p class="pct">&mdash;</p>`);
       wrap.appendChild(d);
     }
+
+    // The side spool has no sensor of its own - the machine has exactly one,
+    // on the extruder. So this is inferred: filament at the extruder while the
+    // CFS reports none engaged means it is being fed from the external path.
+    const fs = st["filament_switch_sensor filament_sensor"] || {};
+    const atExtruder = fs.filament_detected === true;
+    const cfsEngaged = box.filament && box.filament !== "None";
+    const usingExt = atExtruder && !cfsEngaged;
+    const e = document.createElement("div");
+    e.className = "slot ext" + (atExtruder ? "" : " empty");
+    e.innerHTML =
+      `<p class="lbl">External &middot; side spool</p>` +
+      `<div class="mat"><span class="swatch" style="background:transparent"></span>` +
+      `<span class="st${usingExt ? " on" : ""}">${
+        usingExt ? "feeding the extruder"
+                 : atExtruder ? "filament present" : "not detected"}</span></div>` +
+      `<p class="pct">inferred, not measured</p>` +
+      (fs.enabled === false
+        ? `<p class="warn">runout sensor disabled</p>` : "");
+    wrap.appendChild(e);
   }catch(e){ /* the status poll already reports connectivity */ }
 }
 
