@@ -261,7 +261,34 @@ document.getElementById("f").onsubmit = async ev => {
 # A ranged request keeps this cheap: the thumbnail lives in the header, so
 # there is no reason to pull 67 MB of a large file to reach a 23 KB PNG.
 THUMB_BYTES = int(os.environ.get("K2_THUMB_BYTES", "400000"))
-THUMB_CACHE = {}
+# One cached read per file serves both the thumbnail and the estimated time -
+# they live in the same header, so fetching twice would be wasteful.
+META_CACHE = {}
+
+
+def gcode_meta(name):
+    """{"png": bytes|None, "minutes": int|None} for a stored gcode.
+
+    Estimated time comes from the first `M73 P0 R<minutes>` line. Moonraker
+    would normally supply this, but its metadata scan is not running on this
+    printer, so estimated_time comes back None for every file.
+    """
+    if name in META_CACHE:
+        return META_CACHE[name]
+    out = {"png": None, "minutes": None}
+    try:
+        url = MOONRAKER + "/server/files/gcodes/" + urllib.parse.quote(name)
+        req = urllib.request.Request(url, headers={"Range": f"bytes=0-{THUMB_BYTES}"})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read()
+        out["png"] = extract_thumbnail(data)
+        m = re.search(rb"^M73 P\d+ R(\d+)", data, re.M)
+        if m:
+            out["minutes"] = int(m.group(1))
+    except Exception:
+        pass
+    META_CACHE[name] = out          # cache misses too, do not retry every poll
+    return out
 
 
 def extract_thumbnail(data):
@@ -1256,6 +1283,18 @@ async function tickFiles(){
       d.querySelector(".fn").textContent = f.path;   // filenames are user data
       d.querySelector(".thumb").src =
         PROXY + "/api/thumb?file=" + encodeURIComponent(f.path);
+      // Estimated time is parsed from the file, so fetch it per row rather than
+      // blocking the whole list on it. Rows render immediately either way.
+      fetch(PROXY + "/api/meta?file=" + encodeURIComponent(f.path))
+        .then(r => r.ok ? r.json() : null)
+        .then(m => {
+          if(m && m.minutes != null){
+            const h = Math.floor(m.minutes / 60), mm = m.minutes % 60;
+            d.querySelector(".fm").textContent =
+              `${h ? h + "h " + String(mm).padStart(2,"0") + "m" : mm + "m"} · ` +
+              d.querySelector(".fm").textContent;
+          }
+        }).catch(() => {});
       wrap.appendChild(d);
     }
     if(!files.length) wrap.innerHTML = '<div class="frow"><span class="fn">no files</span></div>';
@@ -1700,6 +1739,14 @@ class H(http.server.BaseHTTPRequestHandler):
             self._json(200, {"recipients": load_recipients(),
                              "smtp_configured": bool(SMTP_HOST)})
             return
+        if self.path.startswith("/api/meta?"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = (q.get("file") or [""])[0]
+            if not name or ".." in name or name.startswith("/"):
+                self.send_error(400, "bad filename"); return
+            m = gcode_meta(name)
+            self._json(200, {"minutes": m["minutes"], "has_thumb": bool(m["png"])})
+            return
         if self.path.startswith("/api/thumb?"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             name = (q.get("file") or [""])[0]
@@ -1707,16 +1754,7 @@ class H(http.server.BaseHTTPRequestHandler):
             # Moonraker resolves against its gcode directory.
             if not name or ".." in name or name.startswith("/"):
                 self.send_error(400, "bad filename"); return
-            if name not in THUMB_CACHE:
-                try:
-                    url = f"{MOONRAKER}/server/files/gcodes/" + urllib.parse.quote(name)
-                    req = urllib.request.Request(
-                        url, headers={"Range": f"bytes=0-{THUMB_BYTES}"})
-                    with urllib.request.urlopen(req, timeout=25) as r:
-                        THUMB_CACHE[name] = extract_thumbnail(r.read())
-                except Exception:
-                    THUMB_CACHE[name] = None      # cache misses too, do not retry forever
-            png = THUMB_CACHE.get(name)
+            png = gcode_meta(name)["png"]
             if not png:
                 self._json(404, {"error": "no thumbnail in this file"}); return
             self.send_response(200)
