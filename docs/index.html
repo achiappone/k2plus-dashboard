@@ -154,6 +154,14 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .tokrow{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;
   padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--rule-2)}
 .ctlgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+#console{margin-top:20px}
+#conwrap{background:var(--bg);border:1px solid var(--rule);height:300px;overflow-y:auto;
+  padding:10px 12px;font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.55}
+#conwrap div{white-space:pre-wrap;word-break:break-word}
+.c-cmd{color:var(--series-1)}
+.c-err{color:var(--crit)}
+.c-note{color:var(--text-muted)}
+.c-out{color:var(--text-secondary)}
 #alerts{margin-top:20px}
 #alerts textarea{width:100%;background:var(--bg);color:var(--text-primary);
   border:1px solid var(--rule);padding:9px 10px;font-size:13px;line-height:1.6;
@@ -177,7 +185,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">938c0b3 · 02 Sep 23:53 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">a6cd1ed · 03 Sep 00:36 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -255,6 +263,13 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
       <button id="recon">Reconnect</button>
     </div>
   </div>
+</div>
+
+<div class="card" id="console">
+  <h2>Klipper console</h2>
+  <p class="note" style="margin:-6px 0 12px">The last 200 lines from Klipper.
+  Shutdown reasons appear here in full, where the status endpoints only summarise them.</p>
+  <div id="conwrap"><div class="c-note">loading...</div></div>
 </div>
 
 <div class="card" id="alerts">
@@ -818,6 +833,42 @@ let pollDelay = 1000;
   });
 })();
 setInterval(()=>{ if(misses === 0) tickTemps(); }, 30000);
+
+// ---- klipper console ------------------------------------------------------
+// Klipper marks its own output: "!!" is an error and "//" is an echo/notice.
+// Colouring on those prefixes is what makes a shutdown reason findable in 200
+// lines of ordinary chatter.
+let conSeen = 0, conPinned = true;
+const conwrap = el("conwrap");
+conwrap.addEventListener("scroll", () => {
+  // Stop yanking the view back to the bottom while someone is reading upward.
+  conPinned = conwrap.scrollTop + conwrap.clientHeight >= conwrap.scrollHeight - 24;
+});
+function conClass(m, type){
+  if(type === "command")   return "c-cmd";
+  if(m.startsWith("!!"))   return "c-err";
+  if(m.startsWith("//"))   return "c-note";
+  return "c-out";
+}
+async function tickConsole(){
+  try{
+    const r = await fetch(PROXY + "/api/gcode");
+    if(r.status === 401){ location.reload(); return; }
+    const lines = (await r.json()).result.gcode_store || [];
+    if(lines.length === conSeen) return;          // nothing new, do not redraw
+    conSeen = lines.length;
+    conwrap.innerHTML = "";
+    for(const l of lines){
+      const d = document.createElement("div");
+      d.className = conClass(l.message || "", l.type);
+      d.textContent = (l.type === "command" ? "> " : "") + (l.message || "");
+      conwrap.appendChild(d);
+    }
+    if(conPinned) conwrap.scrollTop = conwrap.scrollHeight;
+  }catch(e){ /* the status poll already reports connectivity */ }
+}
+tickConsole();
+setInterval(tickConsole, 3000);
 
 // ---- failure alerts -------------------------------------------------------
 // The address list is token gated on the server, so nothing loads until the
