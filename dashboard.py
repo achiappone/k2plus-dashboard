@@ -14,7 +14,7 @@ start/pause/cancel a job even if something asks it to.
     python3 dashboard.py      then open http://localhost:8770
 """
 import http.server, socketserver, urllib.request, urllib.parse, json, os, sys
-import secrets, uuid, smtplib, ssl, threading, time, re
+import secrets, uuid, smtplib, ssl, threading, time, re, base64
 from email.message import EmailMessage
 
 # Your printer's address. Override without editing this file:
@@ -235,6 +235,46 @@ document.getElementById("f").onsubmit = async ev => {
 };
 </script></body></html>"""
 
+# ---------------------------------------------------------------- thumbnails
+# Moonraker reports no thumbnails for these files - its metadata scan is not
+# running on this printer (estimated_time and filament_total come back None
+# too). The images ARE in the gcode though, so parse them out directly.
+# A ranged request keeps this cheap: the thumbnail lives in the header, so
+# there is no reason to pull 67 MB of a large file to reach a 23 KB PNG.
+THUMB_BYTES = int(os.environ.get("K2_THUMB_BYTES", "400000"))
+THUMB_CACHE = {}
+
+
+def extract_thumbnail(data):
+    """Largest embedded PNG, or None.
+
+    Creality Print wraps these in THUMBNAIL_BLOCK_START/END, but the payload is
+    the ordinary slicer form: base64 split across comment lines between
+    `; thumbnail begin <W>x<H> <bytes>` and `; thumbnail end`.
+    """
+    best_px, best_png, cur = -1, None, None
+    for line in data.split(b"\n"):
+        line = line.strip()
+        if line.startswith(b"; thumbnail begin"):
+            try:
+                w, h = line.split()[3].split(b"x")
+                cur = (int(w) * int(h), [])
+            except Exception:
+                cur = None
+        elif line.startswith(b"; thumbnail end"):
+            if cur:
+                try:
+                    png = base64.b64decode(b"".join(cur[1]))
+                    if cur[0] > best_px:
+                        best_px, best_png = cur[0], png
+                except Exception:
+                    pass
+            cur = None
+        elif cur is not None and line.startswith(b"; "):
+            cur[1].append(line[2:])
+    return best_png
+
+
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>K2 Plus</title>
@@ -400,6 +440,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .slot.empty{opacity:.45}
 .flist{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
 .frow{background:var(--surface-1);padding:9px 13px;display:flex;justify-content:space-between;
+  gap:14px;align-items:baseline}
+.frow{align-items:center}
+.frow .thumb{width:52px;height:52px;flex:none;background:var(--bg);
+  border:1px solid var(--rule);object-fit:contain}
+.frow .meta{flex:1;min-width:0;display:flex;justify-content:space-between;
   gap:14px;align-items:baseline}
 .frow .fn{font-size:13px;word-break:break-all}
 .frow .fm{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
@@ -1130,9 +1175,15 @@ async function tickFiles(){
       const d = document.createElement("div");
       d.className = "frow";
       const when = f.modified ? new Date(f.modified * 1000).toLocaleDateString() : "";
-      d.innerHTML = `<span class="fn"></span><span class="fm">${
-        (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span>`;
+      // Hide the frame rather than show a broken-image icon: not every file
+      // carries a thumbnail, and an empty square reads better than a glyph.
+      d.innerHTML =
+        `<img class="thumb" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` +
+        `<span class="meta"><span class="fn"></span><span class="fm">${
+          (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span></span>`;
       d.querySelector(".fn").textContent = f.path;   // filenames are user data
+      d.querySelector(".thumb").src =
+        PROXY + "/api/thumb?file=" + encodeURIComponent(f.path);
       wrap.appendChild(d);
     }
     if(!files.length) wrap.innerHTML = '<div class="frow"><span class="fn">no files</span></div>';
@@ -1469,6 +1520,30 @@ class H(http.server.BaseHTTPRequestHandler):
             self._json(200, {"recipients": load_recipients(),
                              "smtp_configured": bool(SMTP_HOST)})
             return
+        if self.path.startswith("/api/thumb?"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            name = (q.get("file") or [""])[0]
+            # No traversal, no absolute paths: this value reaches a URL that
+            # Moonraker resolves against its gcode directory.
+            if not name or ".." in name or name.startswith("/"):
+                self.send_error(400, "bad filename"); return
+            if name not in THUMB_CACHE:
+                try:
+                    url = f"{MOONRAKER}/server/files/gcodes/" + urllib.parse.quote(name)
+                    req = urllib.request.Request(
+                        url, headers={"Range": f"bytes=0-{THUMB_BYTES}"})
+                    with urllib.request.urlopen(req, timeout=25) as r:
+                        THUMB_CACHE[name] = extract_thumbnail(r.read())
+                except Exception:
+                    THUMB_CACHE[name] = None      # cache misses too, do not retry forever
+            png = THUMB_CACHE.get(name)
+            if not png:
+                self._json(404, {"error": "no thumbnail in this file"}); return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers(); self.wfile.write(png); return
         if self.path.startswith("/api/"):
             key = self.path[5:]
             if key not in ALLOWED:              # <- read-only whitelist
