@@ -538,6 +538,11 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
       <p class="note" style="margin:0 0 4px">Set temperatures in the
       <b>Target</b> column of the Thermals table &mdash; type a value and press Enter.</p>
       <div class="ctlrow">
+        <button id="b-homexy">Home XY</button>
+        <button id="b-homez">Home Z</button>
+        <button id="b-homeall">Home all</button>
+      </div>
+      <div class="ctlrow">
         <button id="b-pause">Pause</button>
         <button id="b-resume">Resume</button>
         <button id="b-cancel" class="danger">Cancel print</button>
@@ -1080,6 +1085,13 @@ async function send(action, body, extra){
     return j;
   }catch(e){ msg("proxy unreachable", "err"); return null; }
 }
+async function home(axes, label){
+  const j = await send("home", JSON.stringify({axes}));
+  if(j) msg(`homing ${label}`, "ok");
+}
+el("b-homexy").onclick  = () => home("XY", "X and Y");
+el("b-homez").onclick   = () => home("Z", "Z");
+el("b-homeall").onclick = () => home("ALL", "all axes");
 el("b-pause").onclick  = async () => { const j=await send("pause");  if(j) msg("paused","ok"); };
 el("b-resume").onclick = async () => { const j=await send("resume"); if(j) msg("resumed","ok"); };
 el("b-cancel").onclick = async () => {
@@ -1490,6 +1502,26 @@ class H(http.server.BaseHTTPRequestHandler):
                                     urllib.parse.urlencode({"filename": name}))
                 return self._json(200, {"ok": True, "uploaded": name, "started": start,
                                         "moonraker": json.loads(out or b"{}")})
+
+            if action == "home":
+                b = json.loads(raw or b"{}")
+                axes = str(b.get("axes", "")).upper()
+                G = {"XY": "G28 X Y", "Z": "G28 Z", "ALL": "G28"}
+                if axes not in G:
+                    return self._json(400, {"error": "axes must be XY, Z or ALL"})
+                # Homing mid-print would drive the toolhead off the model, so
+                # refuse rather than trust the caller to have checked.
+                try:
+                    with urllib.request.urlopen(ALLOWED["status"], timeout=8) as r:
+                        pstate = (json.load(r)["result"]["status"]
+                                  .get("print_stats", {}).get("state"))
+                except Exception as e:
+                    return self._json(502, {"error": f"could not read print state: {e}"})
+                if pstate in ("printing", "paused"):
+                    return self._json(409, {"error": f"refusing to home while {pstate}"})
+                self._moonraker("/printer/gcode/script?" +
+                                urllib.parse.urlencode({"script": G[axes]}))
+                return self._json(200, {"ok": True, "sent": G[axes]})
 
             if action == "start":
                 b = json.loads(raw or b"{}")
