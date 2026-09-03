@@ -224,7 +224,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">907b398 · 03 Sep 01:18 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">c752802 · 03 Sep 01:33 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -278,6 +278,11 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
       <h2>Controls</h2>
       <p class="note" style="margin:0 0 4px">Set temperatures in the
       <b>Target</b> column of the Thermals table &mdash; type a value and press Enter.</p>
+      <div class="ctlrow">
+        <button id="b-homexy">Home XY</button>
+        <button id="b-homez">Home Z</button>
+        <button id="b-homeall">Home all</button>
+      </div>
       <div class="ctlrow">
         <button id="b-pause">Pause</button>
         <button id="b-resume">Resume</button>
@@ -826,6 +831,13 @@ async function send(action, body, extra){
     return j;
   }catch(e){ msg("proxy unreachable", "err"); return null; }
 }
+async function home(axes, label){
+  const j = await send("home", JSON.stringify({axes}));
+  if(j) msg(`homing ${label}`, "ok");
+}
+el("b-homexy").onclick  = () => home("XY", "X and Y");
+el("b-homez").onclick   = () => home("Z", "Z");
+el("b-homeall").onclick = () => home("ALL", "all axes");
 el("b-pause").onclick  = async () => { const j=await send("pause");  if(j) msg("paused","ok"); };
 el("b-resume").onclick = async () => { const j=await send("resume"); if(j) msg("resumed","ok"); };
 el("b-cancel").onclick = async () => {
