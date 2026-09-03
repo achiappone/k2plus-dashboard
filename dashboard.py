@@ -327,14 +327,25 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
   .grid .card{order:3}
   .grid #progresscard{order:1}
   .grid #camcard{order:2}
-  /* Compact the progress card: on a phone the 54px readout and the four-across
-     tile strip eat most of the first screen before the camera is reached. */
-  #progresscard{padding:12px 14px}
-  #progresscard .hero{gap:10px;margin-bottom:2px}
-  #progresscard .hero .big{font-size:34px;min-width:4.4ch}
-  #progresscard .hero .sub{font-size:12px;padding-bottom:4px}
-  #progresscard .bar{height:6px;margin:10px 0 3px}
-  #progresscard .tiles{grid-template-columns:repeat(2,1fr);margin-top:12px}
+  /* .camfoot is not a .card, so without this it kept order:0 and the camera's
+     buttons floated above everything, detached from the image they belong to. */
+  .grid .camfoot{order:2;margin-top:0}
+  /* Compact the progress card. On a phone the big readout and a 2x2 tile block
+     ate most of the first screen before the camera came into view, and none of
+     that space was carrying information. */
+  #progresscard{padding:10px 12px}
+  #progresscard h2{margin:0 0 8px}
+  #progresscard .hero{gap:9px;margin-bottom:0;align-items:baseline}
+  #progresscard .hero .big{font-size:26px;min-width:4.2ch}
+  #progresscard .hero .sub{font-size:11px;padding-bottom:0}
+  #progresscard .bar{height:5px;margin:8px 0 2px}
+  #progresscard .small{font-size:11px}
+  /* Four across instead of 2x2: halves the height, and these values are short
+     enough to stay legible. */
+  #progresscard .tiles{grid-template-columns:repeat(4,1fr);margin-top:9px}
+  #progresscard .tile{padding:7px 6px;text-align:center}
+  #progresscard .tile .k{font-size:9px;letter-spacing:.06em}
+  #progresscard .tile .v{font-size:12px;margin:3px 0 0}
 }
 .card{background:var(--surface-1);border:1px solid var(--rule);padding:16px 18px}
 h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);
