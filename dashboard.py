@@ -171,6 +171,24 @@ def _fetch(url):
         return json.load(r)
 
 
+def fire_gcode(script):
+    """Run a long gcode without holding the HTTP request open.
+
+    /printer/gcode/script does not return until the script finishes, and G29 is
+    two to four minutes - long enough that a normal request would time out and
+    report failure while the mesh was still running. Progress shows up in the
+    console either way.
+    """
+    try:
+        req = urllib.request.Request(
+            MOONRAKER + "/printer/gcode/script?" +
+            urllib.parse.urlencode({"script": script}), data=b"", method="POST")
+        urllib.request.urlopen(req, timeout=900).read()
+        print(f"gcode {script!r} finished", flush=True)
+    except Exception as e:
+        print(f"gcode {script!r} failed: {e}", flush=True)
+
+
 def alert_watcher():
     """Fire on TRANSITIONS only, so a stuck error state does not mail forever."""
     last = None
@@ -552,6 +570,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <button id="b-homexy">Home XY</button>
         <button id="b-homez">Home Z</button>
         <button id="b-homeall">Home all</button>
+        <button id="b-mesh">Run bed mesh</button>
       </div>
       <div class="ctlrow">
         <button id="b-pause">Pause</button>
@@ -1100,6 +1119,11 @@ async function home(axes, label){
   const j = await send("home", JSON.stringify({axes}));
   if(j) msg(`homing ${label}`, "ok");
 }
+el("b-mesh").onclick = async () => {
+  if(!confirm("Run a bed mesh probe now?\n\nThe toolhead will move for 2-4 minutes.")) return;
+  const j = await send("mesh", "{}");
+  if(j) msg("bed mesh running - watch the console", "ok");
+};
 el("b-homexy").onclick  = () => home("XY", "X and Y");
 el("b-homez").onclick   = () => home("Z", "Z");
 el("b-homeall").onclick = () => home("ALL", "all axes");
@@ -1513,6 +1537,20 @@ class H(http.server.BaseHTTPRequestHandler):
                                     urllib.parse.urlencode({"filename": name}))
                 return self._json(200, {"ok": True, "uploaded": name, "started": start,
                                         "moonraker": json.loads(out or b"{}")})
+
+            if action == "mesh":
+                try:
+                    with urllib.request.urlopen(ALLOWED["status"], timeout=8) as r:
+                        pstate = (json.load(r)["result"]["status"]
+                                  .get("print_stats", {}).get("state"))
+                except Exception as e:
+                    return self._json(502, {"error": f"could not read print state: {e}"})
+                if pstate in ("printing", "paused"):
+                    return self._json(409, {"error": f"refusing to probe while {pstate}"})
+                # G29, not BED_MESH_CALIBRATE: Creality replaced the stock macro,
+                # and G29 is what START_PRINT itself calls.
+                threading.Thread(target=fire_gcode, args=("G29",), daemon=True).start()
+                return self._json(200, {"ok": True, "sent": "G29"})
 
             if action == "home":
                 b = json.loads(raw or b"{}")
