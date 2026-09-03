@@ -596,8 +596,6 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 
     <div class="card ctl" id="controls" hidden>
       <h2>Controls</h2>
-      <p class="note" style="margin:0 0 4px">Set temperatures in the
-      <b>Target</b> column of the Thermals table &mdash; type a value and press Enter.</p>
       <div class="ctlrow">
         <button id="b-homexy">Home XY</button>
         <button id="b-homez">Home Z</button>
