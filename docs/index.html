@@ -235,7 +235,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">fb35bd9 · 03 Sep 01:36 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">eb53412 · 03 Sep 01:40 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -293,6 +293,7 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
         <button id="b-homexy">Home XY</button>
         <button id="b-homez">Home Z</button>
         <button id="b-homeall">Home all</button>
+        <button id="b-mesh">Run bed mesh</button>
       </div>
       <div class="ctlrow">
         <button id="b-pause">Pause</button>
@@ -846,6 +847,11 @@ async function home(axes, label){
   const j = await send("home", JSON.stringify({axes}));
   if(j) msg(`homing ${label}`, "ok");
 }
+el("b-mesh").onclick = async () => {
+  if(!confirm("Run a bed mesh probe now?\n\nThe toolhead will move for 2-4 minutes.")) return;
+  const j = await send("mesh", "{}");
+  if(j) msg("bed mesh running - watch the console", "ok");
+};
 el("b-homexy").onclick  = () => home("XY", "X and Y");
 el("b-homez").onclick   = () => home("Z", "Z");
 el("b-homeall").onclick = () => home("ALL", "all axes");
