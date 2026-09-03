@@ -154,6 +154,24 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .tokrow{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;
   padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--rule-2)}
 .ctlgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+#cfs,#files{margin-top:20px}
+.slots{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule)}
+.slot{background:var(--surface-1);padding:12px 14px}
+.slot .lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+.slot .mat{display:flex;align-items:center;gap:8px;margin:7px 0 9px;font-size:14px}
+.swatch{width:15px;height:15px;border:1px solid var(--rule);flex:none}
+.slot .rem{height:5px;background:var(--rule-2);overflow:hidden}
+.slot .rem i{display:block;height:100%;background:var(--series-3)}
+.slot .pct{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-secondary);
+  margin-top:5px;font-variant-numeric:tabular-nums}
+.slot.empty{opacity:.45}
+.flist{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
+.frow{background:var(--surface-1);padding:9px 13px;display:flex;justify-content:space-between;
+  gap:14px;align-items:baseline}
+.frow .fn{font-size:13px;word-break:break-all}
+.frow .fm{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
+  white-space:nowrap;font-variant-numeric:tabular-nums}
 #console{margin-top:20px}
 #conwrap{background:var(--bg);border:1px solid var(--rule);height:300px;overflow-y:auto;
   padding:10px 12px;font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.55}
@@ -185,7 +203,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">d0490b8 · 03 Sep 00:36 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">dad83b9 · 03 Sep 00:51 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -263,6 +281,19 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
       <button id="recon">Reconnect</button>
     </div>
   </div>
+</div>
+
+<div class="card" id="cfs">
+  <h2>Filament system</h2>
+  <p class="note" style="margin:-6px 0 12px" id="cfsnote">reading...</p>
+  <div class="slots" id="slots"></div>
+</div>
+
+<div class="card" id="files">
+  <h2>Stored prints</h2>
+  <p class="note" style="margin:-6px 0 12px">On the printer, newest first. Read-only:
+  starting a print from here is deliberately not wired up yet.</p>
+  <div class="flist" id="flist"></div>
 </div>
 
 <div class="card" id="console">
@@ -833,6 +864,76 @@ let pollDelay = 1000;
   });
 })();
 setInterval(()=>{ if(misses === 0) tickTemps(); }, 30000);
+
+// ---- filament system ------------------------------------------------------
+// Slots are T1A..T1D on box T1; the arrays in the box object are positional, so
+// index 3 is the fourth spool. material_type holds a Creality code, and the
+// only place those codes are spelled out is same_material, so build the lookup
+// from there rather than hardcoding a table that would rot.
+const SLOTLBL = ["A", "B", "C", "D"];
+function colourOf(v){
+  // "0FFFFFF" - a leading flag digit then six hex digits.
+  const h = String(v || "").slice(-6);
+  return /^[0-9a-fA-F]{6}$/.test(h) ? "#" + h : "transparent";
+}
+async function tickCfs(){
+  try{
+    const r = await fetch(PROXY + "/api/box");
+    if(r.status === 401){ location.reload(); return; }
+    const b = (await r.json()).result.status.box || {};
+    const names = {};
+    for(const g of (b.same_material || [])) names[g[0]] = g[3];
+    const box = b.T1 || {};
+    const connected = b.state === "connect";
+    el("cfsnote").textContent = connected
+      ? `Box T1 connected · ${b.auto_refill == 1 ? "auto-refill on" : "auto-refill off"}`
+      : "No filament system detected";
+    const wrap = el("slots");
+    wrap.innerHTML = "";
+    for(let i = 0; i < 4; i++){
+      const mat = (box.material_type || [])[i];
+      const rem = parseInt((box.remain_len || [])[i], 10);
+      const has = mat && mat !== "-1";
+      const d = document.createElement("div");
+      d.className = "slot" + (has ? "" : " empty");
+      d.innerHTML =
+        `<p class="lbl">Slot ${i + 1} &middot; T1${SLOTLBL[i]}</p>` +
+        `<div class="mat"><span class="swatch" style="background:${
+          has ? colourOf((box.color_value || [])[i]) : "transparent"}"></span>` +
+        `<span>${has ? (names[mat] || mat) : "empty"}</span></div>` +
+        (has && !isNaN(rem)
+          ? `<div class="rem"><i style="width:${Math.max(0, Math.min(100, rem))}%"></i></div>` +
+            `<p class="pct">${rem}% remaining</p>`
+          : `<p class="pct">&mdash;</p>`);
+      wrap.appendChild(d);
+    }
+  }catch(e){ /* the status poll already reports connectivity */ }
+}
+
+// ---- stored prints --------------------------------------------------------
+async function tickFiles(){
+  try{
+    const r = await fetch(PROXY + "/api/files");
+    if(r.status === 401){ location.reload(); return; }
+    const files = (await r.json()).result || [];
+    files.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+    const wrap = el("flist");
+    wrap.innerHTML = "";
+    for(const f of files){
+      const d = document.createElement("div");
+      d.className = "frow";
+      const when = f.modified ? new Date(f.modified * 1000).toLocaleDateString() : "";
+      d.innerHTML = `<span class="fn"></span><span class="fm">${
+        (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span>`;
+      d.querySelector(".fn").textContent = f.path;   // filenames are user data
+      wrap.appendChild(d);
+    }
+    if(!files.length) wrap.innerHTML = '<div class="frow"><span class="fn">no files</span></div>';
+  }catch(e){ /* as above */ }
+}
+tickCfs(); tickFiles();
+setInterval(tickCfs, 15000);
+setInterval(tickFiles, 60000);
 
 // ---- klipper console ------------------------------------------------------
 // Klipper marks its own output: "!!" is an error and "//" is an echo/notice.
