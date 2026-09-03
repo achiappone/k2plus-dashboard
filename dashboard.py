@@ -331,12 +331,16 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   --bg:#eef1f5; --surface-1:#fcfcfb; --rule:#d5dbe4; --rule-2:#e6eaf0;
   --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7c8794;
   --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a;
+  /* 4-6 were never defined, so the fan and the two plain sensors drew
+     with an invalid stroke and their traces were simply missing. */
+  --series-4:#7a5bd0; --series-5:#0f8ba3; --series-6:#b4437c;
   --good:#1b6b45; --warn:#96600a; --crit:#a3312b;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0a0f16; --surface-1:#1a1a19; --rule:#2b333d; --rule-2:#20262e;
   --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8a94a0;
   --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70;
+  --series-4:#9c81ec; --series-5:#2fb3cc; --series-6:#dc6ba6;
   --good:#4fbf8b; --warn:#e0a33c; --crit:#e07a72;
 }}
 *{box-sizing:border-box}
