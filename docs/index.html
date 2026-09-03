@@ -169,6 +169,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .flist{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
 .frow{background:var(--surface-1);padding:9px 13px;display:flex;justify-content:space-between;
   gap:14px;align-items:baseline}
+.frow{align-items:center}
+.frow .thumb{width:52px;height:52px;flex:none;background:var(--bg);
+  border:1px solid var(--rule);object-fit:contain}
+.frow .meta{flex:1;min-width:0;display:flex;justify-content:space-between;
+  gap:14px;align-items:baseline}
 .frow .fn{font-size:13px;word-break:break-all}
 .frow .fm{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
   white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -203,7 +208,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">dad83b9 · 03 Sep 00:51 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">b3c7b40 · 03 Sep 01:16 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -923,9 +928,15 @@ async function tickFiles(){
       const d = document.createElement("div");
       d.className = "frow";
       const when = f.modified ? new Date(f.modified * 1000).toLocaleDateString() : "";
-      d.innerHTML = `<span class="fn"></span><span class="fm">${
-        (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span>`;
+      // Hide the frame rather than show a broken-image icon: not every file
+      // carries a thumbnail, and an empty square reads better than a glyph.
+      d.innerHTML =
+        `<img class="thumb" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` +
+        `<span class="meta"><span class="fn"></span><span class="fm">${
+          (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span></span>`;
       d.querySelector(".fn").textContent = f.path;   // filenames are user data
+      d.querySelector(".thumb").src =
+        PROXY + "/api/thumb?file=" + encodeURIComponent(f.path);
       wrap.appendChild(d);
     }
     if(!files.length) wrap.innerHTML = '<div class="frow"><span class="fn">no files</span></div>';
