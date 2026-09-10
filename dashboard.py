@@ -328,7 +328,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;450&display=swap">
 <style>
 :root{
-  --bg:#eef1f5; --surface-1:#fcfcfb; --rule:#d5dbe4; --rule-2:#e6eaf0;
+  --bg:#eef1f5; --surface-1:#f6f7f9; --rule:#d5dbe4; --rule-2:#e6eaf0;
   --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#7c8794;
   --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a;
   /* 4-6 were never defined, so the fan and the two plain sensors drew
@@ -337,7 +337,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   --good:#1b6b45; --warn:#96600a; --crit:#a3312b;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0a0f16; --surface-1:#1a1a19; --rule:#2b333d; --rule-2:#20262e;
+  --bg:#0a0f16; --surface-1:#26282b; --rule:#3a3d42; --rule-2:#2f3236;
   --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8a94a0;
   --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70;
   --series-4:#9c81ec; --series-5:#2fb3cc; --series-6:#dc6ba6;
@@ -375,7 +375,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 .camcol{display:flex;flex-direction:column}
 .camcol #camcard{flex:1}
 #progresscard{display:flex;flex-direction:column}
-#progresscard .tiles{margin-top:auto}
+#progresscard .ctl{margin-top:auto}
 .grid>*{min-width:0}
 .sparks>*{min-width:0}
 .card{contain:layout}
@@ -388,9 +388,6 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
   .grid .card{order:3}
   .grid #progresscard{order:1}
   .grid #camcard{order:2}
-  /* .camfoot is not a .card, so without this it kept order:0 and the camera's
-     buttons floated above everything, detached from the image they belong to. */
-  .grid .camfoot{order:2;margin-top:0}
   /* Compact the progress card. On a phone the big readout and a 2x2 tile block
      ate most of the first screen before the camera came into view, and none of
      that space was carrying information. */
@@ -485,7 +482,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
 .camwrap{background:#000;border:1px solid var(--rule)}
 .note{font-size:12px;color:var(--text-muted);margin-top:10px}
-.ctl{margin-top:20px}
+/* Controls sit inside the progress card now, so the heading drops a level and
+   a divider does the job the card border used to. */
+.ctl{margin-top:16px;border-top:1px solid var(--rule-2);padding-top:12px}
+.ctlh{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0}
 .ctl label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
 .ctl input[type=number],.ctl input[type=password]{font-family:"IBM Plex Mono",monospace;
   font-size:14px;background:var(--bg);color:var(--text-primary);border:1px solid var(--rule);
@@ -599,14 +600,29 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <div class="tile"><p class="k">Speed</p><p class="v" id="spd">—</p></div>
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
+      <div class="ctl" id="controls" hidden>
+        <h3 class="ctlh">Controls</h3>
+        <div class="ctlrow">
+          <button id="b-homexy">Home XY</button>
+          <button id="b-homez">Home Z</button>
+          <button id="b-homeall">Home all</button>
+          <button id="b-mesh">Run bed mesh</button>
+          <button id="b-pause">Pause</button>
+          <button id="b-resume">Resume</button>
+          <button id="b-cancel" class="danger">Cancel print</button>
+        </div>
+        <div class="ctlrow">
+          <label class="filelbl" for="gfile">Upload gcode
+            <input id="gfile" type="file" accept=".gcode"></label>
+          <label class="chk"><input id="startnow" type="checkbox"> start it immediately</label>
+          <button id="b-upload">Upload</button>
+        </div>
+        <p class="msg" id="ctlmsg"></p>
+      </div>
     </div>
   <div class="camcol">
     <div class="card" id="camcard" style="padding:0">
       <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
-    </div>
-    <div class="camfoot">
-      <span class="pill" id="campill"><span class="dot"></span><span id="camtx">connecting</span></span>
-      <button id="recon">Reconnect</button>
     </div>
   </div>
 </div>
@@ -627,25 +643,6 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
   <div class="sparks" id="sparks"></div>
 </div>
 
-<div class="card ctl" id="controls" hidden>
-  <h2>Controls</h2>
-  <div class="ctlrow">
-    <button id="b-homexy">Home XY</button>
-    <button id="b-homez">Home Z</button>
-    <button id="b-homeall">Home all</button>
-    <button id="b-mesh">Run bed mesh</button>
-    <button id="b-pause">Pause</button>
-    <button id="b-resume">Resume</button>
-    <button id="b-cancel" class="danger">Cancel print</button>
-  </div>
-  <div class="ctlrow">
-    <label class="filelbl" for="gfile">Upload gcode
-      <input id="gfile" type="file" accept=".gcode"></label>
-    <label class="chk"><input id="startnow" type="checkbox"> start it immediately</label>
-    <button id="b-upload">Upload</button>
-  </div>
-  <p class="msg" id="ctlmsg"></p>
-</div>
 
 <div class="card" id="cfs">
   <h2>CFS (Filament changer)</h2>
@@ -1124,15 +1121,19 @@ const CAM = "";
 // is no reachable media path from outside and the video stayed black. The relay
 // runs the WebRTC leg next to the printer and re-serves MJPEG, which tunnels
 // fine - and means the printer encodes once, not once per viewer.
-function camState(t,c){ el("camtx").textContent=t; el("campill").style.color=c; }
+/* The status pill and its Reconnect button are gone. Nothing replaced them:
+   a dead stream is obvious from the black frame, and the button only ever did
+   what this now does by itself. Retries back off to 30s so a printer that is
+   simply off does not spin a request every few seconds all day. */
+let camRetry = null, camWait = 2000;
 function connectCam(){
-  camState("connecting","var(--text-muted)");
+  clearTimeout(camRetry);
   const img = el("cam");
-  img.onload  = () => camState("live","var(--good)");
-  img.onerror = () => camState("no stream","var(--crit)");
+  img.onload  = () => { camWait = 2000; };
+  img.onerror = () => { camRetry = setTimeout(connectCam, camWait);
+                        camWait = Math.min(camWait * 2, 30000); };
   img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
-el("recon").onclick = connectCam;
 connectCam();
 
 // ---- controls -------------------------------------------------------------
