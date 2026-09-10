@@ -1,6 +1,6 @@
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>K2 Plus</title>
+<title>Chauvet's Print Lab</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;450&display=swap">
 <style>
 :root{
@@ -62,7 +62,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
   #progresscard{padding:10px 12px}
   #progresscard h2{margin:0 0 8px}
   #progresscard .hero{gap:9px;margin-bottom:0;align-items:baseline}
-  #progresscard .hero .big{font-size:26px;min-width:4.2ch}
+  #progresscard .hero .big{font-size:17px;min-width:4.2ch}
   #progresscard .hero .sub{font-size:11px;padding-bottom:0}
   #progresscard .bar{height:5px;margin:8px 0 2px}
   #progresscard .small{font-size:11px}
@@ -77,26 +77,27 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary);
   margin:0 0 14px;font-weight:600}
 .hero{display:flex;align-items:flex-end;gap:16px;margin-bottom:4px}
-.hero .big{font-family:"IBM Plex Mono",monospace;font-size:54px;font-weight:500;
+.hero .big{font-family:"IBM Plex Mono",monospace;font-size:35px;font-weight:500;
   line-height:.95;letter-spacing:-.02em;font-variant-numeric:tabular-nums;
   min-width:5.2ch;display:inline-block}
 .hero .sub{font-size:13px;color:var(--text-secondary);padding-bottom:7px}
 .bar{height:7px;background:var(--rule-2);margin:14px 0 4px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--series-1);transition:width .6s}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
-  gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:18px}
-.tile{background:var(--surface-1);padding:11px 13px}
-.k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0 0 4px}
-.v{font-size:17px;font-weight:500}
+  gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:12px}
+.tile{background:var(--surface-1);padding:6px 11px}
+.k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0 0 1px}
+.v{font-size:15px;font-weight:500;line-height:1.15}
 .small{font-size:12px;color:var(--text-muted)}
 #times{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
   min-height:1.5em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #fname{max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .therm{margin-top:20px}
+.h1sub{font-weight:400;color:var(--text-muted);font-size:.62em;letter-spacing:0}
 table.th{border-collapse:collapse;width:100%;font-size:15px}
 table.th th{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);
   font-weight:600;text-align:left;padding:7px 10px;border-bottom:1px solid var(--rule)}
-table.th td{padding:9px 10px;border-bottom:1px solid var(--rule-2);vertical-align:middle}
+table.th td{padding:4px 10px;border-bottom:1px solid var(--rule-2);vertical-align:middle}
 table.th tr:last-child td{border-bottom:0}
 table.th .n,table.th th.n{text-align:right;font-family:"IBM Plex Mono",monospace;
   font-variant-numeric:tabular-nums}
@@ -170,6 +171,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
   padding-bottom:14px;margin-bottom:14px;border-bottom:1px solid var(--rule-2)}
 .ctlgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
 #cfs,#files,#history{margin-top:20px}
+.morebtn{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  letter-spacing:.06em;text-transform:uppercase;background:var(--surface-1);
+  border:1px solid var(--rule);color:var(--text-secondary);padding:7px 12px;
+  margin-top:1px;width:100%;cursor:pointer}
+.morebtn:hover{border-color:var(--series-1);color:var(--text-primary)}
 .hrow{background:var(--surface-1);padding:9px 13px;display:flex;gap:12px;align-items:center}
 .hrow .hwhen{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
   white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -241,9 +247,9 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 </style></head><body>
 <div class="wrap">
 <header>
-  <h1>K2&nbsp;Plus</h1><span class="host" id="host">—</span>
+  <h1>Chauvet&#39;s Print Lab <span class="h1sub">(Creality K2 Plus)</span></h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">455422e · 03 Sep 10:16 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">8d6abe0 · 10 Sep 15:12 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -282,14 +288,12 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
           <th class="n">Actual</th><th class="tgt">Target</th></tr></thead>
         <tbody id="thbody"></tbody>
       </table></div>
-      <div class="chart" id="chart"><div class="tip" id="ctip"></div></div>
     </div>
 
     <div class="card small" id="smallcard">
       <h2>Each sensor on its own scale</h2>
-      <p class="note" style="margin:-6px 0 14px">The chart above shares one axis, so
-      the chamber traces sit flat near the bottom. Here each gets its own, which shows
-      the shape of a 2&nbsp;&deg;C wobble as clearly as a 200&nbsp;&deg;C one.</p>
+      <p class="note" style="margin:-6px 0 14px">One axis per sensor, so the shape of a
+      2&nbsp;&deg;C wobble reads as clearly as a 200&nbsp;&deg;C one.</p>
       <div class="sparks" id="sparks"></div>
     </div>
 
@@ -300,8 +304,6 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
         <button id="b-homez">Home Z</button>
         <button id="b-homeall">Home all</button>
         <button id="b-mesh">Run bed mesh</button>
-      </div>
-      <div class="ctlrow">
         <button id="b-pause">Pause</button>
         <button id="b-resume">Resume</button>
         <button id="b-cancel" class="danger">Cancel print</button>
@@ -321,22 +323,19 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
     </div>
     <div class="camfoot">
       <span class="pill" id="campill"><span class="dot"></span><span id="camtx">connecting</span></span>
-      <button id="grab">Save still</button>
       <button id="recon">Reconnect</button>
     </div>
   </div>
 </div>
 
 <div class="card" id="cfs">
-  <h2>Filament system</h2>
+  <h2>CFS (Filament changer)</h2>
   <p class="note" style="margin:-6px 0 12px" id="cfsnote">reading...</p>
   <div class="slots" id="slots"></div>
 </div>
 
 <div class="card" id="files">
   <h2>Stored prints</h2>
-  <p class="note" style="margin:-6px 0 12px">On the printer, newest first. Read-only:
-  starting a print from here is deliberately not wired up yet.</p>
   <div class="flist" id="flist"></div>
 </div>
 
@@ -630,10 +629,12 @@ function drawSparks(){
 
 // ---- one chart, six series, one degrees-C axis ---------------------------
 function drawChart(){
-  // Draw in REAL pixels: the viewBox matches the element, so nothing is
-  // stretched. It used to be a fixed 1000-unit box with preserveAspectRatio
-  // "none", which squashed the labels and the line weights horizontally.
+  // The combined chart was removed - every sensor now has its own scale in the
+  // card below, which is the only one that was readable anyway. Left as a
+  // no-op rather than deleted so the resize handler, the poll loop and the
+  // error path do not each need a null check.
   const box = el("chart");
+  if(!box) return;
   // quantised: a one-pixel change must not count as "structure changed" and
   // rebuild the whole chart
   const W = Math.max(360, Math.round((box.clientWidth || 900)/8)*8);
@@ -665,7 +666,7 @@ function drawChart(){
     const t = new Date(now - (n-1-i)*1000);
     xlab += `<text class="xl" x="${X(i)}" y="${H-10}" text-anchor="middle" font-size="14"
               fill="var(--text-muted)" font-family="IBM Plex Mono,monospace">${
-              String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}</text>`;
+              h12(t)}</text>`;
   }
   const paths = series.map(s=>{
     const off = n - s.v.length;
@@ -686,7 +687,7 @@ function drawChart(){
     // only the clock labels move
     existing.querySelectorAll(".xl").forEach((t,k)=>{
       const i = Math.round(k*(n-1)/5), d2 = new Date(now-(n-1-i)*1000);
-      t.textContent = `${String(d2.getHours()).padStart(2,"0")}:${String(d2.getMinutes()).padStart(2,"0")}`;
+      t.textContent = h12(d2);
     });
     return;
   }
@@ -709,8 +710,7 @@ function drawChart(){
     cross.setAttribute("opacity",".5");
     cross.setAttribute("x1",X(i)); cross.setAttribute("x2",X(i));
     const t=new Date(now-(n-1-i)*1000);
-    tip.innerHTML = `<b>${String(t.getHours()).padStart(2,"0")}:${
-      String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}</b><br>`
+    tip.innerHTML = `<b>${h12(t, true)}</b><br>`
       + series.map(s=>{
           const off=n-s.v.length, v=s.v[i-off];
           return v==null?"":`<i style="background:var(--series-${s.c.slot})"></i>${
@@ -819,17 +819,6 @@ function connectCam(){
   img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
 el("recon").onclick = connectCam;
-el("grab").onclick = async () => {
-  try{
-    const r = await fetch(CAM + "/camera/snapshot?t=" + Date.now());
-    if(!r.ok) throw new Error("no frame available");
-    const url = URL.createObjectURL(await r.blob());
-    const a = document.createElement("a");
-    a.download = `k2-${new Date().toISOString().replace(/[:.]/g,"-")}.jpg`;
-    a.href = url; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url), 5000);
-  }catch(e){ camState("grab failed","var(--crit)"); }
-};
 connectCam();
 
 // ---- controls -------------------------------------------------------------
@@ -898,6 +887,17 @@ el("setproxy").onclick = e => { e.preventDefault();
 document.getElementById("grant")?.addEventListener("click", requestAccess);
 showPermState();
 buildTable(); buildSparks(); tick(); tickTemps();
+/* 12-hour wall clock. Every time-of-day readout on this page goes through
+   here so the chart axis, the tooltip, the ETA and the job list cannot drift
+   into different formats. Durations stay as they were - "2h 05m" is not a
+   time of day and gains nothing from am/pm. */
+function h12(d, withSecs){
+  let h = d.getHours();
+  const ap = h < 12 ? "am" : "pm";
+  h = h % 12 || 12;
+  const p = n => String(n).padStart(2,"0");
+  return h + ":" + p(d.getMinutes()) + (withSecs ? ":" + p(d.getSeconds()) : "") + ap;
+}
 function drawClock(){
   if(!clock){ return; }
   const d = (Date.now() - clock.at)/1000;
@@ -907,8 +907,7 @@ function drawClock(){
     parts.push(left > 0 ? `~${hms(left)} remaining`
                         : `overdue by ${hms(-left)}`);
     const done = new Date(Date.now() + Math.max(0,left)*1000);
-    parts.push(`done ~${String(done.getHours()).padStart(2,"0")}:${
-                        String(done.getMinutes()).padStart(2,"0")}`);
+    parts.push(`done ~${h12(done)}`);
   }
   el("times").textContent = parts.join(" · ");
 }
@@ -995,6 +994,28 @@ async function tickCfs(){
   }catch(e){ /* the status poll already reports connectivity */ }
 }
 
+/* Both lists can run to dozens of rows, which pushed everything below them off
+   the screen. Show the newest few, keep the rest one click away. The button is
+   rebuilt with the list on every poll, so it cannot outlive its rows. */
+function collapse(wrap, keep, noun){
+  const rows = [...wrap.children];
+  if(rows.length <= keep) return;
+  const hidden = rows.slice(keep);
+  hidden.forEach(r => { r.hidden = true; });
+  const b = document.createElement("button");
+  b.className = "morebtn";
+  const label = open => open ? `hide ${hidden.length} older ${noun}`
+                             : `show ${hidden.length} more ${noun}`;
+  let open = false;
+  b.textContent = label(false);
+  b.onclick = () => {
+    open = !open;
+    hidden.forEach(r => { r.hidden = !open; });
+    b.textContent = label(open);
+  };
+  wrap.appendChild(b);
+}
+
 // ---- stored prints --------------------------------------------------------
 async function tickFiles(){
   try{
@@ -1032,6 +1053,7 @@ async function tickFiles(){
       wrap.appendChild(d);
     }
     if(!files.length) wrap.innerHTML = '<div class="frow"><span class="fn">no files</span></div>';
+    collapse(wrap, 3, "files");
   }catch(e){ /* as above */ }
 }
 tickCfs(); tickFiles();
@@ -1057,8 +1079,7 @@ async function tickHistory(){
       const st = String(j.status || "");
       d.innerHTML =
         `<span class="hwhen">${String(when.getMonth()+1).padStart(2,"0")}-${
-          String(when.getDate()).padStart(2,"0")} ${String(when.getHours()).padStart(2,"0")}:${
-          String(when.getMinutes()).padStart(2,"0")}</span>` +
+          String(when.getDate()).padStart(2,"0")} ${h12(when)}</span>` +
         `<span class="hst st-${st}">${st}</span>` +
         `<span class="hfn"></span>` +
         `<span class="hdur">${shortDur(j.total_duration)}</span>` +
@@ -1080,6 +1101,7 @@ async function tickHistory(){
       }
       wrap.appendChild(d);
     }
+    collapse(wrap, 3, "jobs");
   }catch(e){ /* the status poll already reports connectivity */ }
 }
 tickHistory();
