@@ -495,6 +495,10 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
   border:1px solid var(--rule);color:var(--text-secondary);padding:7px 12px;
   margin-top:1px;width:100%;cursor:pointer}
 .morebtn:hover{border-color:var(--series-1);color:var(--text-primary)}
+/* .frow and .hrow both set display:flex, and an author rule beats the UA
+   stylesheet's [hidden]{display:none} - so el.hidden = true did nothing and
+   every row stayed on screen. This is what makes the collapse work. */
+[hidden]{display:none!important}
 .hrow{background:var(--surface-1);padding:9px 13px;display:flex;gap:12px;align-items:center}
 .hrow .hwhen{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
   white-space:nowrap;font-variant-numeric:tabular-nums}
