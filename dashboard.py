@@ -364,7 +364,18 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
   border:1px solid currentColor;padding:3px 11px;font-family:"IBM Plex Mono",monospace;
   font-size:12px;letter-spacing:.03em}
 .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
-.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative}
+/* Just the progress card and the camera now. Everything else is full width,
+   like the CFS card - a chart squeezed into 55% of the page was the reason
+   the sensor traces were unreadable in the first place. */
+.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative;
+  align-items:stretch;margin-bottom:20px}
+/* The camera has a fixed 4/3 shape, so it sets the row height and the progress
+   card stretches to meet it. That only works because both are direct grid
+   children now - a card nested in a plain div cannot stretch to the row. */
+.camcol{display:flex;flex-direction:column}
+.camcol #camcard{flex:1}
+#progresscard{display:flex;flex-direction:column}
+#progresscard .tiles{margin-top:auto}
 .grid>*{min-width:0}
 .sparks>*{min-width:0}
 .card{contain:layout}
@@ -373,7 +384,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
      cards themselves to flex items so they can be interleaved. Without it the
      camera could only ever sit after the whole left-hand column. */
   .grid{grid-template-columns:1fr;display:flex;flex-direction:column;gap:20px}
-  .grid > div{display:contents}
+  .grid > div, .camcol{display:contents}
   .grid .card{order:3}
   .grid #progresscard{order:1}
   .grid #camcard{order:2}
@@ -576,7 +587,6 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 </header>
 
 <div class="grid">
-  <div>
     <div class="card" id="progresscard">
       <h2>Progress</h2>
       <div class="hero"><span class="big" id="pct">—</span>
@@ -590,43 +600,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
     </div>
-    <div class="card therm">
-      <h2>Thermals</h2>
-      <div class="tw"><table class="th">
-        <thead><tr><th>Name</th><th class="n">Power</th><th class="n">Change</th>
-          <th class="n">Actual</th><th class="tgt">Target</th></tr></thead>
-        <tbody id="thbody"></tbody>
-      </table></div>
-    </div>
-
-    <div class="card small" id="smallcard">
-      <h2>Each sensor on its own scale</h2>
-      <p class="note" style="margin:-6px 0 14px">One axis per sensor, so the shape of a
-      2&nbsp;&deg;C wobble reads as clearly as a 200&nbsp;&deg;C one.</p>
-      <div class="sparks" id="sparks"></div>
-    </div>
-
-    <div class="card ctl" id="controls" hidden>
-      <h2>Controls</h2>
-      <div class="ctlrow">
-        <button id="b-homexy">Home XY</button>
-        <button id="b-homez">Home Z</button>
-        <button id="b-homeall">Home all</button>
-        <button id="b-mesh">Run bed mesh</button>
-        <button id="b-pause">Pause</button>
-        <button id="b-resume">Resume</button>
-        <button id="b-cancel" class="danger">Cancel print</button>
-      </div>
-      <div class="ctlrow">
-        <label class="filelbl" for="gfile">Upload gcode
-          <input id="gfile" type="file" accept=".gcode"></label>
-        <label class="chk"><input id="startnow" type="checkbox"> start it immediately</label>
-        <button id="b-upload">Upload</button>
-      </div>
-      <p class="msg" id="ctlmsg"></p>
-    </div>
-  </div>
-  <div>
+  <div class="camcol">
     <div class="card" id="camcard" style="padding:0">
       <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
     </div>
@@ -635,6 +609,42 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
       <button id="recon">Reconnect</button>
     </div>
   </div>
+</div>
+
+<div class="card therm">
+  <h2>Thermals</h2>
+  <div class="tw"><table class="th">
+    <thead><tr><th>Name</th><th class="n">Power</th><th class="n">Change</th>
+      <th class="n">Actual</th><th class="tgt">Target</th></tr></thead>
+    <tbody id="thbody"></tbody>
+  </table></div>
+</div>
+
+<div class="card small" id="smallcard">
+  <h2>Each sensor on its own scale</h2>
+  <p class="note" style="margin:-6px 0 14px">One axis per sensor, so the shape of a
+  2&nbsp;&deg;C wobble reads as clearly as a 200&nbsp;&deg;C one.</p>
+  <div class="sparks" id="sparks"></div>
+</div>
+
+<div class="card ctl" id="controls" hidden>
+  <h2>Controls</h2>
+  <div class="ctlrow">
+    <button id="b-homexy">Home XY</button>
+    <button id="b-homez">Home Z</button>
+    <button id="b-homeall">Home all</button>
+    <button id="b-mesh">Run bed mesh</button>
+    <button id="b-pause">Pause</button>
+    <button id="b-resume">Resume</button>
+    <button id="b-cancel" class="danger">Cancel print</button>
+  </div>
+  <div class="ctlrow">
+    <label class="filelbl" for="gfile">Upload gcode
+      <input id="gfile" type="file" accept=".gcode"></label>
+    <label class="chk"><input id="startnow" type="checkbox"> start it immediately</label>
+    <button id="b-upload">Upload</button>
+  </div>
+  <p class="msg" id="ctlmsg"></p>
 </div>
 
 <div class="card" id="cfs">
