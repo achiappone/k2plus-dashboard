@@ -15,6 +15,7 @@ start/pause/cancel a job even if something asks it to.
 """
 import http.server, socketserver, urllib.request, urllib.parse, json, os, sys
 import secrets, uuid, smtplib, ssl, threading, time, re, base64
+import subprocess, tempfile
 from email.message import EmailMessage
 
 # Your printer's address. Override without editing this file:
@@ -48,10 +49,48 @@ CAMERA_SIGNAL = f"http://{PRINTER}:8000/call/webrtc_local"
 # printer encodes for one consumer no matter how many people are watching.
 CAM_RELAY = os.environ.get("K2_CAM_RELAY", "http://127.0.0.1:8771")
 
+def printer_ssh(cmd, timeout=30):
+    """Run one command on the printer over its own sshd.
+
+    Not via Moonraker: /machine/reboot shells out to `sudo shutdown -r now` and
+    Creality's OpenWrt image ships neither binary, so it answers 500 with a
+    traceback. Nor does Moonraker expose the camera daemons at all. sshd is the
+    only thing on the printer that can touch either.
+
+    The password goes to ssh through SSH_ASKPASS, which needs a real executable -
+    but the script only reads an environment variable, so the secret itself is
+    never written to disk.
+    """
+    if not ROOT_PASS:
+        raise RuntimeError("no K2_ROOT_PASS set - add it to /etc/k2-dashboard.env")
+    with tempfile.TemporaryDirectory() as d:
+        ap = os.path.join(d, "askpass")
+        with open(ap, "w") as f:
+            f.write('#!/bin/sh\necho "$K2_ROOT_PASS"\n')
+        os.chmod(ap, 0o700)
+        env = dict(os.environ, K2_ROOT_PASS=ROOT_PASS, SSH_ASKPASS=ap,
+                   SSH_ASKPASS_REQUIRE="force", DISPLAY=":0")
+        r = subprocess.run(
+            ["setsid", "-w", "ssh",
+             "-o", "StrictHostKeyChecking=accept-new",
+             "-o", "PubkeyAuthentication=no",
+             "-o", "PreferredAuthentications=password",
+             "-o", "ConnectTimeout=10",
+             f"root@{PRINTER}", cmd],
+            env=env, capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1][:200]
+                           if (r.stderr or r.stdout).strip() else "ssh failed")
+
+
 # ---------------------------------------------------------------- control mode
 # OFF unless you ask for it:  K2_CONTROL=1 python3 dashboard.py
 # Read-only stays the default because that is the safe thing to leave running.
 CONTROL = os.environ.get("K2_CONTROL") == "1"
+
+# The printer's own root password, for the reboot control below. Lives in
+# /etc/k2-dashboard.env at mode 600 with the other secrets, never in this file.
+ROOT_PASS = os.environ.get("K2_ROOT_PASS", "")
 
 # Stamped into the page so you can tell at a glance WHICH build you are looking
 # at. Without it, a stale cached copy is indistinguishable from a failed deploy,
@@ -369,7 +408,8 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
    the sensor traces were unreadable in the first place. */
 .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative;
   align-items:stretch;margin-bottom:20px}
-/* The camera has a fixed 4/3 shape, so it sets the row height and the progress
+/* The camera has a fixed 16/9 shape - cam_app captures 1920x1080 and the relay
+   re-serves it untouched - so it sets the row height and the progress
    card stretches to meet it. That only works because both are direct grid
    children now - a card nested in a plain div cannot stretch to the row. */
 .camcol{display:flex;flex-direction:column}
@@ -473,7 +513,7 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
   opacity:0;transition:opacity .08s;white-space:nowrap;box-shadow:0 3px 14px rgba(0,0,0,.18);z-index:5}
 .tip b{font-weight:500}
 .tip i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;font-style:normal}
-.cam{width:100%;aspect-ratio:4/3;border:0;background:#000;display:block;object-fit:contain}
+.cam{width:100%;aspect-ratio:16/9;border:0;background:#000;display:block;object-fit:contain}
 .camfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .camfoot button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
   background:var(--surface-1);color:var(--text-primary);border:1px solid var(--rule);
@@ -610,6 +650,8 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
           <button id="b-pause">Pause</button>
           <button id="b-resume">Resume</button>
           <button id="b-cancel" class="danger">Cancel print</button>
+          <button id="b-camreset">Reset camera</button>
+          <button id="b-reboot" class="danger">Reboot printer</button>
         </div>
         <div class="ctlrow">
           <label class="filelbl" for="gfile">Upload gcode
@@ -1172,6 +1214,21 @@ el("b-cancel").onclick = async () => {
   if(!confirm("Cancel the running print?\n\n"+f+"\n\nThis cannot be undone.")) return;
   const j=await send("cancel"); if(j) msg("print cancelled","ok");
 };
+el("b-camreset").onclick = async () => {
+  if(!confirm("Restart the camera daemons?\n\nThe feed drops for about 15 seconds. "
+            + "The print is not affected.")) return;
+  msg("restarting the camera ...");
+  const j = await send("camera_reset", "{}");
+  if(j){ msg("camera restarted - the feed comes back on its own", "ok");
+         setTimeout(connectCam, 15000); }
+};
+el("b-reboot").onclick = async () => {
+  if(!confirm("Reboot the printer?\n\nKlipper, Moonraker and the camera all go "
+            + "down for about a minute. Any running print is lost.")) return;
+  msg("rebooting ...");
+  const j = await send("reboot", "{}");
+  if(j) msg("reboot issued - give it about a minute", "ok");
+};
 el("b-upload").onclick = async () => {
   const f = el("gfile").files[0];
   if(!f){ msg("choose a .gcode file", "err"); return; }
@@ -1618,6 +1675,48 @@ class H(http.server.BaseHTTPRequestHandler):
                 self._moonraker("/printer/gcode/script?" +
                                 urllib.parse.urlencode({"script": g}))
                 return self._json(200, {"ok": True, "sent": g})
+
+            if action == "reboot":
+                # Refuse mid-job regardless of what the UI asked. The confirm()
+                # in the page is a courtesy; this is the part that cannot be
+                # clicked past. 400 not 500 - Cloudflare replaces origin 5xx
+                # with its own page and the reason never reaches the user.
+                try:
+                    with urllib.request.urlopen(
+                            MOONRAKER + "/printer/objects/query?print_stats",
+                            timeout=10) as r:
+                        was = json.load(r)["result"]["status"]["print_stats"]["state"]
+                except Exception:
+                    was = "unknown"
+                if was in ("printing", "paused"):
+                    return self._json(400,
+                        {"error": f"printer is {was} - refusing to reboot mid-job"})
+                try:
+                    # Backgrounded so sshd closes the connection cleanly rather
+                    # than dying mid-session and reporting that as a failure.
+                    printer_ssh("(sleep 1; reboot) >/dev/null 2>&1 &")
+                except Exception as e:
+                    return self._json(400, {"error": f"reboot failed: {e}"})
+                return self._json(200, {"ok": True, "was": was})
+
+            if action == "camera_reset":
+                # procd supervises /usr/bin/webrtc and nothing else: webrtc_local
+                # and cam_app are children it spawns once at startup, so a plain
+                # `/etc/init.d/webrtc restart` leaves a wedged webrtc_local
+                # running and changes nothing. Kill them first, then let the
+                # service restart respawn them. Recovers a dead feed without
+                # taking the printer down - on 2026-09-11 webrtc_local stopped
+                # answering signalling for 30 hours and this is all it needed.
+                #
+                # cam_app does not always come back this way. Video still works
+                # (webrtc_local opens /dev/video0 itself when nothing holds it)
+                # but timelapse and AI detection want a full reboot.
+                try:
+                    printer_ssh("killall webrtc_local cam_app 2>/dev/null; sleep 2; "
+                                "/etc/init.d/webrtc restart", timeout=45)
+                except Exception as e:
+                    return self._json(400, {"error": f"camera reset failed: {e}"})
+                return self._json(200, {"ok": True})
 
             if action in ("pause", "resume", "cancel"):
                 self._moonraker(f"/printer/print/{action}")

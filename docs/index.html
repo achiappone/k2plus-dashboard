@@ -45,7 +45,8 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
    the sensor traces were unreadable in the first place. */
 .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative;
   align-items:stretch;margin-bottom:20px}
-/* The camera has a fixed 4/3 shape, so it sets the row height and the progress
+/* The camera has a fixed 16/9 shape - cam_app captures 1920x1080 and the relay
+   re-serves it untouched - so it sets the row height and the progress
    card stretches to meet it. That only works because both are direct grid
    children now - a card nested in a plain div cannot stretch to the row. */
 .camcol{display:flex;flex-direction:column}
@@ -149,7 +150,7 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
   opacity:0;transition:opacity .08s;white-space:nowrap;box-shadow:0 3px 14px rgba(0,0,0,.18);z-index:5}
 .tip b{font-weight:500}
 .tip i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;font-style:normal}
-.cam{width:100%;aspect-ratio:4/3;border:0;background:#000;display:block;object-fit:contain}
+.cam{width:100%;aspect-ratio:16/9;border:0;background:#000;display:block;object-fit:contain}
 .camfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .camfoot button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
   background:var(--surface-1);color:var(--text-primary);border:1px solid var(--rule);
@@ -265,7 +266,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>Chauvet&#39;s Print Lab <span class="h1sub">(Creality K2 Plus)</span></h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">a1cda42 · 10 Sep 18:49 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">2d7e1c9 · 12 Sep 03:05 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -305,6 +306,8 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
           <button id="b-pause">Pause</button>
           <button id="b-resume">Resume</button>
           <button id="b-cancel" class="danger">Cancel print</button>
+          <button id="b-camreset">Reset camera</button>
+          <button id="b-reboot" class="danger">Reboot printer</button>
         </div>
         <div class="ctlrow">
           <label class="filelbl" for="gfile">Upload gcode
@@ -871,6 +874,21 @@ el("b-cancel").onclick = async () => {
   const f = el("fname").textContent;
   if(!confirm("Cancel the running print?\n\n"+f+"\n\nThis cannot be undone.")) return;
   const j=await send("cancel"); if(j) msg("print cancelled","ok");
+};
+el("b-camreset").onclick = async () => {
+  if(!confirm("Restart the camera daemons?\n\nThe feed drops for about 15 seconds. "
+            + "The print is not affected.")) return;
+  msg("restarting the camera ...");
+  const j = await send("camera_reset", "{}");
+  if(j){ msg("camera restarted - the feed comes back on its own", "ok");
+         setTimeout(connectCam, 15000); }
+};
+el("b-reboot").onclick = async () => {
+  if(!confirm("Reboot the printer?\n\nKlipper, Moonraker and the camera all go "
+            + "down for about a minute. Any running print is lost.")) return;
+  msg("rebooting ...");
+  const j = await send("reboot", "{}");
+  if(j) msg("reboot issued - give it about a minute", "ok");
 };
 el("b-upload").onclick = async () => {
   const f = el("gfile").files[0];
