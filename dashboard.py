@@ -112,6 +112,56 @@ CAM_REPAIR = (
     "start-stop-daemon -S -b -m -p /var/run/main-video0_webrtc_local.pid "
     "--exec /usr/bin/webrtc_local")
 
+# The camera's own image settings. Exposed because this is a fixed-focus module
+# with no focus or zoom control at all - sharpness, exposure and gain are the
+# only things that change how well a print can actually be judged on screen.
+# Setting them works while cam_app is streaming; they are not exclusive.
+CAM_DEV = "/dev/video0"
+
+_CTRL_RE = re.compile(
+    r"^\s*(?P<name>\w+)\s+0x[0-9a-fA-F]+\s+\((?P<type>\w+)\)\s*:\s*(?P<rest>.*)$")
+_MENU_RE = re.compile(r"^\s+(?P<val>\d+):\s*(?P<label>.+?)\s*$")
+
+
+def parse_controls(text):
+    """v4l2-ctl --list-ctrls-menus into something the page can render.
+
+    Driven entirely by what the camera reports - no hardcoded list of controls
+    or ranges. A different camera exposes different ones and this still works,
+    and more usefully the ranges are always the hardware's rather than a guess
+    that drifts out of date.
+
+    `flags=inactive` matters: exposure_absolute is inactive while exposure_auto
+    is on, and white_balance_temperature while its auto is on. Those are shown
+    disabled rather than hidden, because a greyed slider explains why it cannot
+    be moved and a missing one does not.
+    """
+    out, cur = [], None
+    for line in text.splitlines():
+        m = _CTRL_RE.match(line)
+        if m:
+            kv = dict(re.findall(r"(\w+)=(-?\w+)", m.group("rest")))
+            cur = {"name": m.group("name"), "type": m.group("type"),
+                   "min": int(kv.get("min", 0)), "max": int(kv.get("max", 1)),
+                   "step": int(kv.get("step", 1)),
+                   "default": int(kv.get("default", 0)),
+                   "value": int(kv.get("value", 0)),
+                   "inactive": kv.get("flags") == "inactive"}
+            if cur["type"] == "menu":
+                cur["menu"] = {}
+            out.append(cur)
+            continue
+        mm = _MENU_RE.match(line)
+        if mm and cur is not None and cur["type"] == "menu":
+            cur["menu"][mm.group("val")] = mm.group("label")
+    return out
+
+
+def camera_controls():
+    return parse_controls(
+        printer_ssh(f"v4l2-ctl -d {CAM_DEV} --list-ctrls-menus", timeout=20) or "")
+
+
 CAM_PROBE = (
     "pgrep cam_app >/dev/null && echo app=up || echo app=down; "
     "pgrep webrtc_local >/dev/null && echo rtc=up || echo rtc=down; "
@@ -625,6 +675,36 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
    printer or the relay for anything. */
 .cam{cursor:zoom-in;transition:transform .12s ease-out}
 .camwrap.zoomed .cam{cursor:zoom-out}
+.cammet{display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 14px;
+  border-top:1px solid var(--rule);font-family:"IBM Plex Mono",monospace;
+  font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.cammet b{color:var(--text-primary);font-weight:500}
+/* The measured rate is compared against the configured one, so a relay falling
+   behind is visible rather than implied. */
+.cammet b.slow{color:var(--warn)}
+.cammet .mage{margin-left:auto}
+.camctl{margin:0;border-top:1px solid var(--rule);padding:12px 14px 14px}
+.camctl summary{font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--text-muted);font-weight:600}
+.ccrow{display:grid;grid-template-columns:132px 1fr 52px;gap:10px;align-items:center;
+  padding:5px 0}
+.ccrow .cn{font-size:12px;color:var(--text-secondary);text-transform:capitalize}
+.ccrow .cv{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
+  text-align:right;font-variant-numeric:tabular-nums}
+.ccrow input[type=range]{width:100%;accent-color:var(--series-1)}
+.ccrow select{font-size:12px;background:var(--bg);color:var(--text-primary);
+  border:1px solid var(--rule);padding:4px 6px;width:100%}
+.ccrow input[type=checkbox]{accent-color:var(--series-1);justify-self:start}
+/* Inactive is the camera's own word: exposure_absolute cannot be moved while
+   exposure_auto is on. Shown greyed rather than hidden, because a disabled
+   slider explains itself and a missing one does not. */
+.ccrow.off{opacity:.45}
+.ccfoot{display:flex;align-items:center;gap:12px;margin-top:12px}
+.ccfoot button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  background:var(--surface-1);color:var(--text-primary);border:1px solid var(--rule);
+  padding:5px 12px;cursor:pointer}
+.ccfoot button:hover:not(:disabled){border-color:var(--text-secondary)}
+.ccfoot .msg{margin:0}
 .camz{position:absolute;top:8px;right:8px;font-family:"IBM Plex Mono",monospace;
   font-size:11px;background:rgba(10,15,22,.78);border:1px solid var(--rule);
   color:var(--text-primary);padding:2px 7px;pointer-events:none}
@@ -805,6 +885,24 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <p id="camdetail"></p>
         <p id="camaction"></p>
       </div>
+      <div class="cammet" id="cammet">
+        <span><b id="m-fps">&mdash;</b> fps</span>
+        <span><b id="m-res">&mdash;</b></span>
+        <span><b id="m-kb">&mdash;</b> kB/frame</span>
+        <span><b id="m-view">&mdash;</b> watching</span>
+        <span class="mage" id="m-age"></span>
+      </div>
+      <details class="camctl" id="camctl" hidden>
+        <summary>Image settings</summary>
+        <p class="note" style="margin:2px 0 12px">Set on the camera itself, so they
+        apply to the timelapse and Creality&#39;s own app too, not just this page.
+        There is no focus or zoom control &mdash; the module is fixed focus.</p>
+        <div id="camctls"></div>
+        <div class="ccfoot">
+          <button id="b-camdefaults">Reset to defaults</button>
+          <span class="msg" id="camctlmsg"></span>
+        </div>
+      </details>
     </div>
   </div>
 </div>
@@ -1448,6 +1546,110 @@ el("b-camreset").onclick = async () => {
          camNote(null); camFails = 0; camProbed = false;
          setTimeout(connectCam, 15000); }
 };
+/* Relay metrics. Read from the relay's own healthz, which is already proxied
+   through this server under /camera/. Polling it does NOT count as watching -
+   only /camera/stream does - so this cannot keep the headless browser alive by
+   itself. */
+async function tickCamMet(){
+  const set = (id, v) => { el(id).textContent = v; };
+  try{
+    const r = await fetch(PROXY + "/camera/healthz", {cache: "no-store"});
+    if(!r.ok) throw new Error("no healthz");
+    const h = await r.json();
+    const fps = el("m-fps");
+    fps.textContent = h.fps == null ? "—" : h.fps.toFixed(1);
+    // Only a rate that exists can be slow. Idle is not slow.
+    fps.className = (h.fps != null && h.fps_target && h.fps < h.fps_target * 0.75)
+      ? "slow" : "";
+    set("m-res", h.width && h.height ? h.width + "×" + h.height : "—");
+    set("m-kb", h.bytes ? Math.round(h.bytes / 1024) : "—");
+    set("m-view", h.viewers == null ? "—" : h.viewers);
+    set("m-age", !h.wanted ? "idle"
+      : h.last_frame_age_s == null ? "no frames yet"
+      : h.last_frame_age_s > 5 ? "last frame " + h.last_frame_age_s.toFixed(0) + "s ago"
+      : "live");
+  }catch(e){
+    for(const id of ["m-fps","m-res","m-kb","m-view"]) set(id, "—");
+    set("m-age", "relay unreachable");
+  }
+}
+tickCamMet(); setInterval(tickCamMet, 5000);
+
+/* Camera image settings, rendered from whatever the device reports rather than
+   from a hardcoded list - the ranges are then always the hardware's own.
+   Every write returns the full set, because changing one control can activate
+   or deactivate another (exposure_auto gates exposure_absolute). */
+function ccMsg(t, cls){ const m = el("camctlmsg"); m.textContent = t; m.className = "msg " + (cls||""); }
+
+function renderCamCtls(list){
+  const wrap = el("camctls");
+  el("camctl").hidden = !list.length;
+  if(!list.length) return;
+  wrap.innerHTML = "";
+  for(const c of list){
+    const row = document.createElement("div");
+    row.className = "ccrow" + (c.inactive ? " off" : "");
+    const name = document.createElement("span");
+    name.className = "cn";
+    name.textContent = c.name.replace(/_/g, " ");
+    const out = document.createElement("span");
+    out.className = "cv";
+
+    let input;
+    if(c.type === "menu"){
+      input = document.createElement("select");
+      for(const [v, lab] of Object.entries(c.menu || {})){
+        const o = document.createElement("option");
+        o.value = v; o.textContent = lab;
+        if(Number(v) === c.value) o.selected = true;
+        input.appendChild(o);
+      }
+    }else if(c.type === "bool"){
+      input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = c.value > 0;
+    }else{
+      input = document.createElement("input");
+      input.type = "range";
+      input.min = c.min; input.max = c.max; input.step = c.step || 1;
+      input.value = c.value;
+      out.textContent = c.value;
+      // Live readout while dragging, but only write on release - each write is
+      // an ssh round trip to the printer and a drag would fire dozens.
+      input.oninput = () => { out.textContent = input.value; };
+    }
+    input.disabled = !!c.inactive;
+    input.id = "cc-" + c.name;
+    name.setAttribute("for", input.id);
+
+    input.onchange = async () => {
+      const v = c.type === "bool" ? (input.checked ? 1 : 0) : Number(input.value);
+      ccMsg("setting " + c.name.replace(/_/g, " ") + " ...");
+      const j = await send("camera_ctrl", JSON.stringify({name: c.name, value: v}));
+      if(j && j.controls){ renderCamCtls(j.controls); ccMsg(""); }
+      else renderCamCtls(list);          // refused - put the control back
+    };
+
+    row.appendChild(name); row.appendChild(input); row.appendChild(out);
+    wrap.appendChild(row);
+  }
+}
+
+async function loadCamCtls(){
+  if(!CONTROL_ON) return;
+  try{
+    const r = await fetch(PROXY + "/api/camera/controls", {cache: "no-store"});
+    if(!r.ok) return;
+    renderCamCtls((await r.json()).controls || []);
+  }catch(e){ /* camera settings are optional; the feed matters more */ }
+}
+
+el("b-camdefaults").onclick = async () => {
+  ccMsg("restoring defaults ...");
+  const j = await send("camera_defaults", "{}");
+  if(j && j.controls){ renderCamCtls(j.controls); ccMsg("back to defaults", "ok"); }
+};
+
 el("b-reboot").onclick = async () => {
   if(!confirm("Reboot the printer?\n\nKlipper, Moonraker and the camera all go "
             + "down for about a minute. Any running print is lost.")) return;
@@ -1474,7 +1676,7 @@ get("info").then(i=>{
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   CONTROL_ON = !!c.control;
-  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; }
+  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; loadCamCtls(); }
 }).catch(()=>{});
 document.getElementById("grant")?.addEventListener("click", requestAccess);
 showPermState();
@@ -1943,6 +2145,51 @@ class H(http.server.BaseHTTPRequestHandler):
                     return self._json(400, {"error": f"camera reset failed: {e}"})
                 return self._json(200, {"ok": True})
 
+            if action == "camera_ctrl":
+                # The allowlist IS the camera: a name has to be one the device
+                # just reported, and the value has to sit inside the range it
+                # gave for it. Nothing user-supplied reaches the shell except an
+                # int that has been bounds-checked against the hardware.
+                b = json.loads(raw or b"{}")
+                name = b.get("name")
+                try:
+                    ctrls = {c["name"]: c for c in camera_controls()}
+                except Exception as e:
+                    return self._json(400, {"error": f"cannot read camera controls: {e}"})
+                c = ctrls.get(name)
+                if not c:
+                    return self._json(400, {"error": f"unknown control {name!r}"})
+                try:
+                    v = int(b.get("value"))
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": "value must be a whole number"})
+                if not (c["min"] <= v <= c["max"]):
+                    return self._json(400,
+                        {"error": f"{name} must be {c['min']}..{c['max']}, got {v}"})
+                try:
+                    # Set and re-read down one ssh connection. Hand back the
+                    # whole set, not just the one that moved: turning
+                    # exposure_auto off is what makes exposure_absolute active,
+                    # and the page cannot know that on its own.
+                    out = printer_ssh(
+                        f"v4l2-ctl -d {CAM_DEV} --set-ctrl {name}={v} && "
+                        f"v4l2-ctl -d {CAM_DEV} --list-ctrls-menus", timeout=25)
+                    return self._json(200, {"ok": True, "controls": parse_controls(out or "")})
+                except Exception as e:
+                    return self._json(400, {"error": f"set {name} failed: {e}"})
+
+            if action == "camera_defaults":
+                try:
+                    ctrls = camera_controls()
+                    pairs = ",".join(f"{c['name']}={c['default']}"
+                                     for c in ctrls if not c["inactive"])
+                    out = printer_ssh(
+                        f"v4l2-ctl -d {CAM_DEV} --set-ctrl {pairs} && "
+                        f"v4l2-ctl -d {CAM_DEV} --list-ctrls-menus", timeout=25)
+                    return self._json(200, {"ok": True, "controls": parse_controls(out or "")})
+                except Exception as e:
+                    return self._json(400, {"error": f"reset failed: {e}"})
+
             if action == "light":
                 # output_pin LED is PWM with scale 1.0, so this is 0..1 and not
                 # the 0..255 the pin's name suggests.
@@ -2122,6 +2369,14 @@ class H(http.server.BaseHTTPRequestHandler):
             # deploy", and costs a confusing round of head-scratching
             self.send_header("Cache-Control", "no-store, must-revalidate")
             self.end_headers(); self.wfile.write(body); return
+        if self.path == "/api/camera/controls":
+            if not CONTROL or not ROOT_PASS:
+                return self._json(200, {"controls": []})
+            try:
+                return self._json(200, {"controls": camera_controls()})
+            except Exception as e:
+                return self._json(200, {"controls": [], "error": str(e)})
+
         if self.path == "/api/camera/health":
             # Only reachable with control on: it needs the printer's own shell.
             if not CONTROL:
