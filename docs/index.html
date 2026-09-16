@@ -61,6 +61,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
      cards themselves to flex items so they can be interleaved. Without it the
      camera could only ever sit after the whole left-hand column. */
   .grid{grid-template-columns:1fr;display:flex;flex-direction:column;gap:20px}
+  .row2{grid-template-columns:1fr}
   .grid > div, .camcol{display:contents}
   .grid .card{order:3}
   .grid #progresscard{order:1}
@@ -99,7 +100,10 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
   gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:12px}
 .tile{background:var(--surface-1);padding:5px 8px}
 .tile .k{font-size:9px;letter-spacing:.08em}
-.tile .v{font-size:13px}
+/* .v is a <p>, so without this it carries the UA default 1em top AND bottom -
+   about 13px of dead space under every value, which is what made these cells
+   twice as tall as the text in them. */
+.tile .v{font-size:13px;margin:2px 0 0}
 .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0 0 1px}
 .v{font-size:15px;font-weight:500;line-height:1.15}
 .small{font-size:12px;color:var(--text-muted)}
@@ -107,6 +111,13 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
   min-height:1.5em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #fname{max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .therm{margin-top:20px}
+/* Thermals and the per-sensor sparks share a row. Both were full-width bands
+   holding the same six sensors, one as numbers and one as shapes, so reading
+   them meant scrolling between two views of one thing. align-items:start so the
+   short table does not stretch to the taller sparks card. */
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;margin-top:20px}
+.row2>*{min-width:0}
+.row2>.card{margin-top:0}
 .h1sub{font-weight:400;color:var(--text-muted);font-size:.62em;letter-spacing:0}
 table.th{border-collapse:collapse;width:100%;font-size:15px}
 table.th th{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);
@@ -291,7 +302,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>Chauvet&#39;s Print Lab <span class="h1sub">(Creality K2 Plus)</span></h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">626fa44 · 16 Sep 16:14 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">846e0b1 · 16 Sep 16:16 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -361,20 +372,22 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
   </div>
 </div>
 
-<div class="card therm">
-  <h2>Thermals</h2>
-  <div class="tw"><table class="th">
-    <thead><tr><th>Name</th><th class="n">Power</th><th class="n">Change</th>
-      <th class="n">Actual</th><th class="tgt">Target</th></tr></thead>
-    <tbody id="thbody"></tbody>
-  </table></div>
-</div>
+<div class="row2">
+  <div class="card therm">
+    <h2>Thermals</h2>
+    <div class="tw"><table class="th">
+      <thead><tr><th>Name</th><th class="n">Power</th><th class="n">Change</th>
+        <th class="n">Actual</th><th class="tgt">Target</th></tr></thead>
+      <tbody id="thbody"></tbody>
+    </table></div>
+  </div>
 
-<div class="card small" id="smallcard">
-  <h2>Each sensor on its own scale</h2>
-  <p class="note" style="margin:-6px 0 14px">One axis per sensor, so the shape of a
-  2&nbsp;&deg;C wobble reads as clearly as a 200&nbsp;&deg;C one.</p>
-  <div class="sparks" id="sparks"></div>
+  <div class="card small" id="smallcard">
+    <h2>Each sensor on its own scale</h2>
+    <p class="note" style="margin:-6px 0 14px">One axis per sensor, so the shape of a
+    2&nbsp;&deg;C wobble reads as clearly as a 200&nbsp;&deg;C one.</p>
+    <div class="sparks" id="sparks"></div>
+  </div>
 </div>
 
 
