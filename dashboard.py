@@ -26,7 +26,7 @@ CAMERA    = f"http://{PRINTER}:8000"      # WebRTC signalling origin, not an ima
 PORT      = 8770
 
 _OBJ = ["print_stats", "virtual_sdcard", "extruder", "heater_bed", "toolhead",
-        "display_status", "gcode_move",
+        "display_status", "gcode_move", "output_pin LED",
         "heater_generic chamber_heater", "temperature_fan chamber_fan",
         "temperature_sensor chamber_temp", "temperature_sensor mcu_temp"]
 OBJECTS = "&".join(urllib.parse.quote(o) for o in _OBJ)
@@ -81,6 +81,89 @@ def printer_ssh(cmd, timeout=30):
     if r.returncode != 0:
         raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1][:200]
                            if (r.stderr or r.stdout).strip() else "ssh failed")
+    return r.stdout
+
+
+# ------------------------------------------------------------- camera triage
+# A dead feed used to be a black rectangle and nothing else, which is the same
+# picture whether the printer is off, the relay is down, or the camera daemon
+# has crashed. Those need three different fixes, so the page now asks the
+# printer which one it is.
+#
+# The failure worth naming: cam_app reads /tmp/.cam_version, a tmpfs copy that
+# auto_uvc.sh writes on USB hotplug. When its firmware-version compare aborts
+# (`unknown operand` on a version string that is not a number), it leaves that
+# file holding only video_node. cam_app looks up "manufactory", gets nothing,
+# and dereferences the miss - SIGSEGV, silently, with an empty stdout. Nothing
+# then feeds webrtc_local, so WebRTC still negotiates, ICE still connects, the
+# viewer still waits forever for a first frame.
+CAM_VER  = "/tmp/.cam_version"
+CAM_NODE = "/dev/v4l/by-id/main-video0"
+CAM_CFG  = "/mnt/UDISK/creality/userdata/config/cam_version.json"
+
+# Rebuild the tmpfs copy from the persistent config, then start the daemons.
+# Not `/etc/init.d/webrtc restart`: procd supervises /usr/bin/webrtc only, and
+# cam_app is a hotplug child it never respawns.
+CAM_REPAIR = (
+    "killall webrtc_local cam_app 2>/dev/null; sleep 2; "
+    f"jq -c '{{main_cam: (.main_cam + {{video_node: \"{CAM_NODE}\"}})}}' {CAM_CFG} > {CAM_VER}; "
+    f"start-stop-daemon -S -b -m -p /var/run/main-video0.pid --exec /usr/bin/cam_app -- "
+    f"-i {CAM_NODE} -t 0 -w 1920 -h 1080 -f 15 -c; sleep 1; "
+    "start-stop-daemon -S -b -m -p /var/run/main-video0_webrtc_local.pid "
+    "--exec /usr/bin/webrtc_local")
+
+CAM_PROBE = (
+    "pgrep cam_app >/dev/null && echo app=up || echo app=down; "
+    "pgrep webrtc_local >/dev/null && echo rtc=up || echo rtc=down; "
+    f"grep -q manufactory {CAM_VER} 2>/dev/null && echo ver=ok || echo ver=bad")
+
+
+def camera_health():
+    """One ssh round trip; returns what is wrong and what fixes it.
+
+    Read-only - it starts nothing. The page calls this only when the stream is
+    already failing, so the cost lands on a broken camera, never on a live one.
+    """
+    fields = dict(kv.split("=", 1)
+                  for kv in (printer_ssh(CAM_PROBE, timeout=20) or "").split()
+                  if "=" in kv)
+    app, rtc, ver = (fields.get(k) for k in ("app", "rtc", "ver"))
+
+    # Never infer health from silence. An empty or partial probe means the ssh
+    # ran but told us nothing, which is not the same as "both daemons are up".
+    if app is None or rtc is None:
+        return {"ok": False, "fix": False,
+                "cause": "The camera feed is not arriving.",
+                "detail": "The printer answered but did not report what its camera "
+                          "daemons are doing, so the fault cannot be narrowed down "
+                          "from here.",
+                "action": "Check cam_app and webrtc_local on the printer directly."}
+
+    if app == "down" and ver == "bad":
+        return {"ok": False, "fix": True,
+                "cause": "cam_app has crashed and cannot restart on its own.",
+                "detail": "Its runtime config (" + CAM_VER + ") is missing the "
+                          "manufactory field, so cam_app segfaults the moment it "
+                          "reads it. Nothing is feeding the camera, which is why "
+                          "the video connects but never shows a frame.",
+                "action": "Reset camera rebuilds that file and starts it again."}
+    if app == "down":
+        return {"ok": False, "fix": True,
+                "cause": "cam_app is not running.",
+                "detail": "Nothing is reading the camera, so the WebRTC session "
+                          "connects and then sits with no frames to send.",
+                "action": "Reset camera starts it again."}
+    if rtc == "down":
+        return {"ok": False, "fix": True,
+                "cause": "webrtc_local is not running.",
+                "detail": "The camera is being read, but nothing is serving it "
+                          "over WebRTC.",
+                "action": "Reset camera starts it again."}
+    return {"ok": True, "fix": False,
+            "cause": "The camera daemons on the printer are both running.",
+            "detail": "So the fault is between here and the printer: the relay "
+                      "may be down, or the network path to the camera is broken.",
+            "action": "Check camrelay on the dashboard host."}
 
 
 # ---------------------------------------------------------------- control mode
@@ -406,7 +489,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 /* Just the progress card and the camera now. Everything else is full width,
    like the CFS card - a chart squeezed into 55% of the page was the reason
    the sensor traces were unreadable in the first place. */
-.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative;
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;position:relative;
   align-items:stretch;margin-bottom:20px}
 /* The camera has a fixed 16/9 shape - cam_app captures 1920x1080 and the relay
    re-serves it untouched - so it sets the row height and the progress
@@ -521,6 +604,20 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .camfoot button:hover{border-color:var(--text-secondary)}
 .camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
 .camwrap{background:#000;border:1px solid var(--rule)}
+.camnote{border:1px solid var(--crit);border-top:0;background:rgba(224,122,114,.08);
+  padding:11px 13px;font-size:13px;line-height:1.5}
+.camnote b{display:block;font-weight:600;color:var(--crit);margin-bottom:4px}
+.camnote p{margin:0 0 6px;color:var(--text-secondary)}
+.camnote p:last-child{margin:0}
+.lightrow{display:flex;align-items:center;gap:10px;margin-top:14px}
+.lightrow button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  background:transparent;color:var(--text-secondary);border:1px solid var(--rule);
+  padding:6px 11px;cursor:pointer}
+.lightrow button:hover{border-color:var(--text-secondary)}
+.lightrow button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
+.lightrow button[aria-pressed="true"]{border-color:var(--series-1);color:var(--text)}
+.lightrow .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-muted)}
 .note{font-size:12px;color:var(--text-muted);margin-top:10px}
 /* Controls sit inside the progress card now, so the heading drops a level and
    a divider does the job the card border used to. */
@@ -640,6 +737,10 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <div class="tile"><p class="k">Speed</p><p class="v" id="spd">—</p></div>
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
+      <div class="lightrow" id="lightrow" hidden>
+        <button id="b-light" aria-pressed="false">Chamber light</button>
+        <span class="k" id="lighttx">off</span>
+      </div>
       <div class="ctl" id="controls" hidden>
         <h3 class="ctlh">Controls</h3>
         <div class="ctlrow">
@@ -665,6 +766,11 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
   <div class="camcol">
     <div class="card" id="camcard" style="padding:0">
       <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
+      <div class="camnote" id="camnote" hidden>
+        <b id="camcause">—</b>
+        <p id="camdetail"></p>
+        <p id="camaction"></p>
+      </div>
     </div>
   </div>
 </div>
@@ -1096,6 +1202,8 @@ async function tick(){
       : null;
     if(!clock) el("times").textContent = `${hm(el_)} elapsed`;
     drawClock();
+    const led = s["output_pin LED"];
+    if(led) paintLight(led.value);
     pushSample(s);
     if(!hovering){ try{ drawChart(); drawSparks(); }catch(e){} }
     el("z").textContent   = (ps.z_pos!=null? ps.z_pos.toFixed(2):"—")+" mm";
@@ -1167,12 +1275,37 @@ const CAM = "";
    a dead stream is obvious from the black frame, and the button only ever did
    what this now does by itself. Retries back off to 30s so a printer that is
    simply off does not spin a request every few seconds all day. */
-let camRetry = null, camWait = 2000;
+let camRetry = null, camWait = 2000, camFails = 0, camProbed = false;
+
+/* A black rectangle looks identical whether the printer is off, the relay is
+   down, or cam_app has segfaulted on the printer - and those want three
+   different fixes. So on a sustained failure the page asks the printer which
+   one it is and says so, instead of leaving you to guess.
+
+   Probed once per outage, and only from the second consecutive error: a single
+   blip when the relay cycles must not cost an ssh round trip. */
+function camNote(h){
+  const n = el("camnote");
+  if(!h){ n.hidden = true; return; }
+  el("camcause").textContent  = h.cause  || "The camera feed is not arriving.";
+  el("camdetail").textContent = h.detail || "";
+  el("camaction").textContent = h.action || "";
+  n.hidden = false;
+}
+async function camDiagnose(){
+  if(camProbed) return;
+  camProbed = true;
+  try{
+    const r = await fetch(PROXY+"/api/camera/health", {cache:"no-store"});
+    if(r.ok) camNote(await r.json());
+  }catch(e){ /* proxy itself is down; the header pill already says that */ }
+}
 function connectCam(){
   clearTimeout(camRetry);
   const img = el("cam");
-  img.onload  = () => { camWait = 2000; };
-  img.onerror = () => { camRetry = setTimeout(connectCam, camWait);
+  img.onload  = () => { camWait = 2000; camFails = 0; camProbed = false; camNote(null); };
+  img.onerror = () => { if(++camFails >= 2) camDiagnose();
+                        camRetry = setTimeout(connectCam, camWait);
                         camWait = Math.min(camWait * 2, 30000); };
   img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
@@ -1195,6 +1328,19 @@ async function send(action, body, extra){
     return j;
   }catch(e){ msg("proxy unreachable", "err"); return null; }
 }
+/* Reflects the pin rather than what we last sent: the light is also switchable
+   from the printer's own screen, so a local button press has to show up here. */
+let lightOn = false;
+function paintLight(v){
+  lightOn = v > 0;
+  el("b-light").setAttribute("aria-pressed", lightOn ? "true" : "false");
+  el("lighttx").textContent = lightOn ? "on" : "off";
+}
+el("b-light").onclick = async () => {
+  const want = !lightOn;
+  const j = await send("light", JSON.stringify({on: want}));
+  if(j){ paintLight(want ? 1 : 0); msg("light " + (want ? "on" : "off"), "ok"); }
+};
 async function home(axes, label){
   const j = await send("home", JSON.stringify({axes}));
   if(j) msg(`homing ${label}`, "ok");
@@ -1220,6 +1366,7 @@ el("b-camreset").onclick = async () => {
   msg("restarting the camera ...");
   const j = await send("camera_reset", "{}");
   if(j){ msg("camera restarted - the feed comes back on its own", "ok");
+         camNote(null); camFails = 0; camProbed = false;
          setTimeout(connectCam, 15000); }
 };
 el("b-reboot").onclick = async () => {
@@ -1248,7 +1395,7 @@ get("info").then(i=>{
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   CONTROL_ON = !!c.control;
-  if(CONTROL_ON) el("controls").hidden = false;
+  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; }
 }).catch(()=>{});
 document.getElementById("grant")?.addEventListener("click", requestAccess);
 showPermState();
@@ -1700,23 +1847,31 @@ class H(http.server.BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, "was": was})
 
             if action == "camera_reset":
-                # procd supervises /usr/bin/webrtc and nothing else: webrtc_local
-                # and cam_app are children it spawns once at startup, so a plain
-                # `/etc/init.d/webrtc restart` leaves a wedged webrtc_local
-                # running and changes nothing. Kill them first, then let the
-                # service restart respawn them. Recovers a dead feed without
-                # taking the printer down - on 2026-09-11 webrtc_local stopped
-                # answering signalling for 30 hours and this is all it needed.
+                # Restarting the service is not enough and never was. procd
+                # supervises /usr/bin/webrtc only; cam_app is a USB-hotplug child
+                # started by auto_uvc.sh, so once it dies nothing brings it back
+                # short of replugging the camera. Worse, killing it is how it
+                # dies - the old version of this handler killed cam_app and then
+                # restarted a service that does not own it.
                 #
-                # cam_app does not always come back this way. Video still works
-                # (webrtc_local opens /dev/video0 itself when nothing holds it)
-                # but timelapse and AI detection want a full reboot.
+                # So rebuild /tmp/.cam_version from the persistent config first
+                # (see CAM_REPAIR), because cam_app segfaults on the truncated
+                # copy auto_uvc.sh leaves behind, then start both daemons by
+                # hand. Recovers the feed without taking the printer down.
                 try:
-                    printer_ssh("killall webrtc_local cam_app 2>/dev/null; sleep 2; "
-                                "/etc/init.d/webrtc restart", timeout=45)
+                    printer_ssh(CAM_REPAIR, timeout=60)
                 except Exception as e:
                     return self._json(400, {"error": f"camera reset failed: {e}"})
                 return self._json(200, {"ok": True})
+
+            if action == "light":
+                # output_pin LED is PWM with scale 1.0, so this is 0..1 and not
+                # the 0..255 the pin's name suggests.
+                on = bool(json.loads(raw or b"{}").get("on"))
+                g = f"SET_PIN PIN=LED VALUE={1 if on else 0}"
+                self._moonraker("/printer/gcode/script?" +
+                                urllib.parse.urlencode({"script": g}))
+                return self._json(200, {"ok": True, "on": on})
 
             if action in ("pause", "resume", "cancel"):
                 self._moonraker(f"/printer/print/{action}")
@@ -1888,6 +2043,28 @@ class H(http.server.BaseHTTPRequestHandler):
             # deploy", and costs a confusing round of head-scratching
             self.send_header("Cache-Control", "no-store, must-revalidate")
             self.end_headers(); self.wfile.write(body); return
+        if self.path == "/api/camera/health":
+            # Only reachable with control on: it needs the printer's own shell.
+            if not CONTROL:
+                return self._json(200, {"ok": False, "fix": False,
+                    "cause": "The camera feed is not arriving.",
+                    "detail": "Start the dashboard with K2_CONTROL=1 to let it ask "
+                              "the printer which daemon has died.",
+                    "action": ""})
+            if not ROOT_PASS:
+                return self._json(200, {"ok": False, "fix": False,
+                    "cause": "The camera feed is not arriving.",
+                    "detail": "This dashboard cannot ask the printer which daemon "
+                              "has died, because no printer password is configured.",
+                    "action": "Set K2_ROOT_PASS in /etc/k2-dashboard.env."})
+            try:
+                return self._json(200, camera_health())
+            except Exception as e:
+                return self._json(200, {"ok": False, "fix": False,
+                    "cause": "The printer is not answering.",
+                    "detail": f"Could not reach it over ssh: {e}",
+                    "action": "Check that the printer is powered on and on the network."})
+
         if self.path == "/api/capabilities":
             # says WHETHER control is on. Never the token.
             self._json(200, {"control": CONTROL,
