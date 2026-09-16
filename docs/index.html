@@ -184,6 +184,36 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
    printer or the relay for anything. */
 .cam{cursor:zoom-in;transition:transform .12s ease-out}
 .camwrap.zoomed .cam{cursor:zoom-out}
+.cammet{display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 14px;
+  border-top:1px solid var(--rule);font-family:"IBM Plex Mono",monospace;
+  font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.cammet b{color:var(--text-primary);font-weight:500}
+/* The measured rate is compared against the configured one, so a relay falling
+   behind is visible rather than implied. */
+.cammet b.slow{color:var(--warn)}
+.cammet .mage{margin-left:auto}
+.camctl{margin:0;border-top:1px solid var(--rule);padding:12px 14px 14px}
+.camctl summary{font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--text-muted);font-weight:600}
+.ccrow{display:grid;grid-template-columns:132px 1fr 52px;gap:10px;align-items:center;
+  padding:5px 0}
+.ccrow .cn{font-size:12px;color:var(--text-secondary);text-transform:capitalize}
+.ccrow .cv{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
+  text-align:right;font-variant-numeric:tabular-nums}
+.ccrow input[type=range]{width:100%;accent-color:var(--series-1)}
+.ccrow select{font-size:12px;background:var(--bg);color:var(--text-primary);
+  border:1px solid var(--rule);padding:4px 6px;width:100%}
+.ccrow input[type=checkbox]{accent-color:var(--series-1);justify-self:start}
+/* Inactive is the camera's own word: exposure_absolute cannot be moved while
+   exposure_auto is on. Shown greyed rather than hidden, because a disabled
+   slider explains itself and a missing one does not. */
+.ccrow.off{opacity:.45}
+.ccfoot{display:flex;align-items:center;gap:12px;margin-top:12px}
+.ccfoot button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  background:var(--surface-1);color:var(--text-primary);border:1px solid var(--rule);
+  padding:5px 12px;cursor:pointer}
+.ccfoot button:hover:not(:disabled){border-color:var(--text-secondary)}
+.ccfoot .msg{margin:0}
 .camz{position:absolute;top:8px;right:8px;font-family:"IBM Plex Mono",monospace;
   font-size:11px;background:rgba(10,15,22,.78);border:1px solid var(--rule);
   color:var(--text-primary);padding:2px 7px;pointer-events:none}
@@ -310,7 +340,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>Chauvet&#39;s Print Lab <span class="h1sub">(Creality K2 Plus)</span></h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">d3629f7 · 16 Sep 20:32 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">e88e03f · 16 Sep 21:28 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -378,6 +408,24 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
         <p id="camdetail"></p>
         <p id="camaction"></p>
       </div>
+      <div class="cammet" id="cammet">
+        <span><b id="m-fps">&mdash;</b> fps</span>
+        <span><b id="m-res">&mdash;</b></span>
+        <span><b id="m-kb">&mdash;</b> kB/frame</span>
+        <span><b id="m-view">&mdash;</b> watching</span>
+        <span class="mage" id="m-age"></span>
+      </div>
+      <details class="camctl" id="camctl" hidden>
+        <summary>Image settings</summary>
+        <p class="note" style="margin:2px 0 12px">Set on the camera itself, so they
+        apply to the timelapse and Creality&#39;s own app too, not just this page.
+        There is no focus or zoom control &mdash; the module is fixed focus.</p>
+        <div id="camctls"></div>
+        <div class="ccfoot">
+          <button id="b-camdefaults">Reset to defaults</button>
+          <span class="msg" id="camctlmsg"></span>
+        </div>
+      </details>
     </div>
   </div>
 </div>
@@ -1026,6 +1074,110 @@ el("b-camreset").onclick = async () => {
          camNote(null); camFails = 0; camProbed = false;
          setTimeout(connectCam, 15000); }
 };
+/* Relay metrics. Read from the relay's own healthz, which is already proxied
+   through this server under /camera/. Polling it does NOT count as watching -
+   only /camera/stream does - so this cannot keep the headless browser alive by
+   itself. */
+async function tickCamMet(){
+  const set = (id, v) => { el(id).textContent = v; };
+  try{
+    const r = await fetch(PROXY + "/camera/healthz", {cache: "no-store"});
+    if(!r.ok) throw new Error("no healthz");
+    const h = await r.json();
+    const fps = el("m-fps");
+    fps.textContent = h.fps == null ? "—" : h.fps.toFixed(1);
+    // Only a rate that exists can be slow. Idle is not slow.
+    fps.className = (h.fps != null && h.fps_target && h.fps < h.fps_target * 0.75)
+      ? "slow" : "";
+    set("m-res", h.width && h.height ? h.width + "×" + h.height : "—");
+    set("m-kb", h.bytes ? Math.round(h.bytes / 1024) : "—");
+    set("m-view", h.viewers == null ? "—" : h.viewers);
+    set("m-age", !h.wanted ? "idle"
+      : h.last_frame_age_s == null ? "no frames yet"
+      : h.last_frame_age_s > 5 ? "last frame " + h.last_frame_age_s.toFixed(0) + "s ago"
+      : "live");
+  }catch(e){
+    for(const id of ["m-fps","m-res","m-kb","m-view"]) set(id, "—");
+    set("m-age", "relay unreachable");
+  }
+}
+tickCamMet(); setInterval(tickCamMet, 5000);
+
+/* Camera image settings, rendered from whatever the device reports rather than
+   from a hardcoded list - the ranges are then always the hardware's own.
+   Every write returns the full set, because changing one control can activate
+   or deactivate another (exposure_auto gates exposure_absolute). */
+function ccMsg(t, cls){ const m = el("camctlmsg"); m.textContent = t; m.className = "msg " + (cls||""); }
+
+function renderCamCtls(list){
+  const wrap = el("camctls");
+  el("camctl").hidden = !list.length;
+  if(!list.length) return;
+  wrap.innerHTML = "";
+  for(const c of list){
+    const row = document.createElement("div");
+    row.className = "ccrow" + (c.inactive ? " off" : "");
+    const name = document.createElement("span");
+    name.className = "cn";
+    name.textContent = c.name.replace(/_/g, " ");
+    const out = document.createElement("span");
+    out.className = "cv";
+
+    let input;
+    if(c.type === "menu"){
+      input = document.createElement("select");
+      for(const [v, lab] of Object.entries(c.menu || {})){
+        const o = document.createElement("option");
+        o.value = v; o.textContent = lab;
+        if(Number(v) === c.value) o.selected = true;
+        input.appendChild(o);
+      }
+    }else if(c.type === "bool"){
+      input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = c.value > 0;
+    }else{
+      input = document.createElement("input");
+      input.type = "range";
+      input.min = c.min; input.max = c.max; input.step = c.step || 1;
+      input.value = c.value;
+      out.textContent = c.value;
+      // Live readout while dragging, but only write on release - each write is
+      // an ssh round trip to the printer and a drag would fire dozens.
+      input.oninput = () => { out.textContent = input.value; };
+    }
+    input.disabled = !!c.inactive;
+    input.id = "cc-" + c.name;
+    name.setAttribute("for", input.id);
+
+    input.onchange = async () => {
+      const v = c.type === "bool" ? (input.checked ? 1 : 0) : Number(input.value);
+      ccMsg("setting " + c.name.replace(/_/g, " ") + " ...");
+      const j = await send("camera_ctrl", JSON.stringify({name: c.name, value: v}));
+      if(j && j.controls){ renderCamCtls(j.controls); ccMsg(""); }
+      else renderCamCtls(list);          // refused - put the control back
+    };
+
+    row.appendChild(name); row.appendChild(input); row.appendChild(out);
+    wrap.appendChild(row);
+  }
+}
+
+async function loadCamCtls(){
+  if(!CONTROL_ON) return;
+  try{
+    const r = await fetch(PROXY + "/api/camera/controls", {cache: "no-store"});
+    if(!r.ok) return;
+    renderCamCtls((await r.json()).controls || []);
+  }catch(e){ /* camera settings are optional; the feed matters more */ }
+}
+
+el("b-camdefaults").onclick = async () => {
+  ccMsg("restoring defaults ...");
+  const j = await send("camera_defaults", "{}");
+  if(j && j.controls){ renderCamCtls(j.controls); ccMsg("back to defaults", "ok"); }
+};
+
 el("b-reboot").onclick = async () => {
   if(!confirm("Reboot the printer?\n\nKlipper, Moonraker and the camera all go "
             + "down for about a minute. Any running print is lost.")) return;
@@ -1052,7 +1204,7 @@ get("info").then(i=>{
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   CONTROL_ON = !!c.control;
-  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; }
+  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; loadCamCtls(); }
 }).catch(()=>{});
 document.getElementById("grant")?.addEventListener("click", requestAccess);
 showPermState();
