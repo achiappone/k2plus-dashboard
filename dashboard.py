@@ -703,17 +703,12 @@ table.th .n,table.th th.n{text-align:right;font-family:"IBM Plex Mono",monospace
 table.th td.n.pw{width:76px}  table.th td.n.ch{width:104px}
 table.th td.n.act{width:104px} table.th td:first-child{width:auto}
 table.th{table-layout:fixed}
-/* The fixed column widths above total about 400px, which is wider than a phone
-   can give this card. table-layout:fixed does not shrink them - it overlaps
-   them, so power was printing on top of the sensor name. Let the wrapper scroll
-   instead, and give the table a floor so the fixed widths always have room.
-   Both are no-ops on a desktop, where there is more width than the minimum. */
-.tw{overflow-x:auto}
-table.th{min-width:430px}
+
 table.th th.tgt{text-align:left;width:118px}
 .nm{display:flex;align-items:center;gap:9px;font-weight:450}
 .swatch{width:10px;height:10px;flex:none;border-radius:2px}
 .pw{color:var(--text-muted);font-size:15px}
+.pw.on{color:var(--good)}
 .ch{color:var(--text-muted);font-size:14px}
 .act{font-size:18px;font-weight:500}
 .deg{color:var(--text-muted);font-size:12px}
@@ -723,6 +718,40 @@ td.tgtcell input{width:74px;font-family:"IBM Plex Mono",monospace;font-size:16px
   text-align:right;font-variant-numeric:tabular-nums}
 td.tgtcell input:disabled{border-color:transparent;background:transparent;color:var(--text-muted)}
 td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
+/* The fixed column widths above total about 400px, which is wider than a phone
+   can give this card - and table-layout:fixed does not shrink them, it overlaps
+   them, so power printed on top of the sensor name. Below 600px every column is
+   narrowed instead, so the whole table fits with nothing to scroll sideways and
+   nothing hidden. The numbers stay full size relative to their labels; it is
+   the names and headers that give up the most, because they are the part you
+   read once and the readings are the part you come back for. */
+@media(max-width:600px){
+  .tw{overflow-x:visible}
+  table.th{font-size:12px}
+  table.th th{font-size:9px;letter-spacing:.05em;padding:6px 4px}
+  table.th td{padding:4px}
+  /* On the HEADER cells, not the body ones: with table-layout:fixed the column
+     widths come from the first row, so widths set on td are simply ignored. */
+  table.th th:nth-child(2){width:32px}
+  table.th th:nth-child(3){width:44px}
+  table.th th:nth-child(4){width:54px}
+  table.th th.tgt{width:66px}
+  /* The sensor name is a bare text node inside .nm, not an element, so it
+     cannot be selected - and as an anonymous flex item it refuses to shrink
+     and overflows onto the next column. Dropping the flex box entirely lets it
+     wrap the way ordinary text does. */
+  .nm{display:block;font-size:11px;overflow-wrap:anywhere}
+  .nm .swatch{display:inline-block;vertical-align:middle;margin-right:5px}
+  table.th td{overflow:hidden}
+  /* More specific than the .swatch rule further down, which is for the CFS
+     slots and would otherwise win on source order and keep these at 15px. */
+  .nm .swatch{width:8px;height:8px}
+  .act{font-size:13px}
+  .pw,.ch{font-size:10px}
+  .deg{font-size:9px}
+  td.tgtcell{gap:2px}
+  td.tgtcell input{width:40px;font-size:11px;padding:3px}
+}
 .small{margin-top:20px}
 .sparks{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
   gap:1px;background:var(--rule);border:1px solid var(--rule)}
@@ -1454,7 +1483,13 @@ async function tick(){
         el("ac-"+c.slot).innerHTML = o.temperature.toFixed(1)+'<span class="deg"> °C</span>';
       // heaters report power 0..1; a temperature_fan reports speed instead
       const pw = (o.power!=null) ? o.power : o.speed;
-      el("pw-"+c.slot).textContent = (pw!=null) ? Math.round(pw*100)+"%" : "";
+      const pwc = el("pw-"+c.slot);
+      const pwn = (pw!=null) ? Math.round(pw*100) : null;
+      pwc.textContent = (pwn!=null) ? pwn+"%" : "";
+      // Green while it is actually drawing power, so which heaters and fans are
+      // working reads at a glance. Keyed off the rounded number rather than the
+      // raw one, so the colour never disagrees with the 0% it is sitting next to.
+      pwc.classList.toggle("on", pwn!=null && pwn>0);
       const sl = slope((store[c.key]||{}).temperatures);
       el("ch-"+c.slot).textContent = (sl>=0?"+":"")+sl.toFixed(1)+" °C/s";
       const inp = c.set ? el("tg-"+c.slot) : null;
