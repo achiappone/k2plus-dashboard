@@ -43,7 +43,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 /* Just the progress card and the camera now. Everything else is full width,
    like the CFS card - a chart squeezed into 55% of the page was the reason
    the sensor traces were unreadable in the first place. */
-.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;position:relative;
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;position:relative;
   align-items:stretch;margin-bottom:20px}
 /* The camera has a fixed 16/9 shape - cam_app captures 1920x1080 and the relay
    re-serves it untouched - so it sets the row height and the progress
@@ -163,6 +163,20 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
   background:var(--bg);border:1px solid var(--rule);padding:10px 12px;margin:10px 0;overflow-x:auto}
 .setup.ok{display:none}
 .camwrap{background:#000;border:1px solid var(--rule)}
+.camnote{border:1px solid var(--crit);border-top:0;background:rgba(224,122,114,.08);
+  padding:11px 13px;font-size:13px;line-height:1.5}
+.camnote b{display:block;font-weight:600;color:var(--crit);margin-bottom:4px}
+.camnote p{margin:0 0 6px;color:var(--text-secondary)}
+.camnote p:last-child{margin:0}
+.lightrow{display:flex;align-items:center;gap:10px;margin-top:14px}
+.lightrow button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  background:transparent;color:var(--text-secondary);border:1px solid var(--rule);
+  padding:6px 11px;cursor:pointer}
+.lightrow button:hover{border-color:var(--text-secondary)}
+.lightrow button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
+.lightrow button[aria-pressed="true"]{border-color:var(--series-1);color:var(--text)}
+.lightrow .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-muted)}
 .note{font-size:12px;color:var(--text-muted);margin-top:10px}
 /* Controls sit inside the progress card now, so the heading drops a level and
    a divider does the job the card border used to. */
@@ -266,7 +280,7 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 <header>
   <h1>Chauvet&#39;s Print Lab <span class="h1sub">(Creality K2 Plus)</span></h1><span class="host" id="host">—</span>
   <span class="pill" id="state"><span class="dot"></span><span id="statetx">connecting</span></span>
-  <span class="build" id="build" title="which build of this page you are looking at">12d354b · 12 Sep 03:21 UTC</span>
+  <span class="build" id="build" title="which build of this page you are looking at">b668bfa · 16 Sep 16:09 UTC</span>
 </header>
 
 <div class="setup" id="setup">
@@ -296,6 +310,10 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
         <div class="tile"><p class="k">Speed</p><p class="v" id="spd">—</p></div>
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
+      <div class="lightrow" id="lightrow" hidden>
+        <button id="b-light" aria-pressed="false">Chamber light</button>
+        <span class="k" id="lighttx">off</span>
+      </div>
       <div class="ctl" id="controls" hidden>
         <h3 class="ctlh">Controls</h3>
         <div class="ctlrow">
@@ -321,6 +339,11 @@ PRINTER_HOST=10.0.0.42 python3 dashboard.py</code>
   <div class="camcol">
     <div class="card" id="camcard" style="padding:0">
       <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
+      <div class="camnote" id="camnote" hidden>
+        <b id="camcause">—</b>
+        <p id="camdetail"></p>
+        <p id="camaction"></p>
+      </div>
     </div>
   </div>
 </div>
@@ -756,6 +779,8 @@ async function tick(){
       : null;
     if(!clock) el("times").textContent = `${hm(el_)} elapsed`;
     drawClock();
+    const led = s["output_pin LED"];
+    if(led) paintLight(led.value);
     pushSample(s);
     if(!hovering){ try{ drawChart(); drawSparks(); }catch(e){} }
     el("z").textContent   = (ps.z_pos!=null? ps.z_pos.toFixed(2):"—")+" mm";
@@ -828,12 +853,37 @@ const CAM = PROXY;
    a dead stream is obvious from the black frame, and the button only ever did
    what this now does by itself. Retries back off to 30s so a printer that is
    simply off does not spin a request every few seconds all day. */
-let camRetry = null, camWait = 2000;
+let camRetry = null, camWait = 2000, camFails = 0, camProbed = false;
+
+/* A black rectangle looks identical whether the printer is off, the relay is
+   down, or cam_app has segfaulted on the printer - and those want three
+   different fixes. So on a sustained failure the page asks the printer which
+   one it is and says so, instead of leaving you to guess.
+
+   Probed once per outage, and only from the second consecutive error: a single
+   blip when the relay cycles must not cost an ssh round trip. */
+function camNote(h){
+  const n = el("camnote");
+  if(!h){ n.hidden = true; return; }
+  el("camcause").textContent  = h.cause  || "The camera feed is not arriving.";
+  el("camdetail").textContent = h.detail || "";
+  el("camaction").textContent = h.action || "";
+  n.hidden = false;
+}
+async function camDiagnose(){
+  if(camProbed) return;
+  camProbed = true;
+  try{
+    const r = await fetch(PROXY+"/api/camera/health", {cache:"no-store"});
+    if(r.ok) camNote(await r.json());
+  }catch(e){ /* proxy itself is down; the header pill already says that */ }
+}
 function connectCam(){
   clearTimeout(camRetry);
   const img = el("cam");
-  img.onload  = () => { camWait = 2000; };
-  img.onerror = () => { camRetry = setTimeout(connectCam, camWait);
+  img.onload  = () => { camWait = 2000; camFails = 0; camProbed = false; camNote(null); };
+  img.onerror = () => { if(++camFails >= 2) camDiagnose();
+                        camRetry = setTimeout(connectCam, camWait);
                         camWait = Math.min(camWait * 2, 30000); };
   img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
@@ -856,6 +906,19 @@ async function send(action, body, extra){
     return j;
   }catch(e){ msg("proxy unreachable", "err"); return null; }
 }
+/* Reflects the pin rather than what we last sent: the light is also switchable
+   from the printer's own screen, so a local button press has to show up here. */
+let lightOn = false;
+function paintLight(v){
+  lightOn = v > 0;
+  el("b-light").setAttribute("aria-pressed", lightOn ? "true" : "false");
+  el("lighttx").textContent = lightOn ? "on" : "off";
+}
+el("b-light").onclick = async () => {
+  const want = !lightOn;
+  const j = await send("light", JSON.stringify({on: want}));
+  if(j){ paintLight(want ? 1 : 0); msg("light " + (want ? "on" : "off"), "ok"); }
+};
 async function home(axes, label){
   const j = await send("home", JSON.stringify({axes}));
   if(j) msg(`homing ${label}`, "ok");
@@ -881,6 +944,7 @@ el("b-camreset").onclick = async () => {
   msg("restarting the camera ...");
   const j = await send("camera_reset", "{}");
   if(j){ msg("camera restarted - the feed comes back on its own", "ok");
+         camNote(null); camFails = 0; camProbed = false;
          setTimeout(connectCam, 15000); }
 };
 el("b-reboot").onclick = async () => {
@@ -909,7 +973,7 @@ get("info").then(i=>{
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   CONTROL_ON = !!c.control;
-  if(CONTROL_ON) el("controls").hidden = false;
+  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; }
 }).catch(()=>{});
 document.getElementById("grant")?.addEventListener("click", requestAccess);
 showPermState();
