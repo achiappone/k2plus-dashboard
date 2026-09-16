@@ -356,6 +356,17 @@ ALLOWED = {                                   # the only things the proxy will f
 # having none. smtplib is stdlib, so this adds no dependency.
 ALERT_FILE = os.environ.get("K2_ALERT_FILE", "/var/lib/k2dash/alerts.json")
 ALERT_POLL = int(os.environ.get("K2_ALERT_POLL", "20"))      # seconds
+
+# Manual filament levels, kept HERE and never sent to the printer.
+#
+# The printer's own remain_len is read-only in every sense: box.py registers no
+# gcode for it, box_wrapper.cpython-39.so exports only cmd_get_remain_len, and
+# nothing on disk holds it. It comes off the spool RFID and the measuring wheel
+# inside Creality's compiled module. So this does not "correct" the printer - it
+# records what YOU know and shows that instead, clearly marked, while the
+# printer goes on using its own figure for runout and auto-refill.
+CFS_FILE = os.environ.get("K2_CFS_FILE", "/var/lib/k2dash/cfs.json")
+CFS_SLOTS = ("T1A", "T1B", "T1C", "T1D")
 SMTP_HOST  = os.environ.get("K2_SMTP_HOST", "")
 SMTP_PORT  = int(os.environ.get("K2_SMTP_PORT", "587"))
 SMTP_USER  = os.environ.get("K2_SMTP_USER", "")
@@ -384,6 +395,27 @@ def save_recipients(addrs):
         json.dump({"recipients": addrs}, f)
     os.replace(tmp, ALERT_FILE)          # atomic, so a crash cannot truncate the list
     return addrs
+
+
+def load_manual():
+    try:
+        with open(CFS_FILE) as f:
+            d = json.load(f).get("slots", {})
+        return {k: int(v) for k, v in d.items()
+                if k in CFS_SLOTS and isinstance(v, int) and 0 <= v <= 100}
+    except Exception:
+        return {}
+
+
+def save_manual(slots):
+    d = os.path.dirname(CFS_FILE)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = CFS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"slots": slots}, f)
+    os.replace(tmp, CFS_FILE)          # atomic, as with the alert list
+    return slots
 
 
 def send_mail(subject, body):
@@ -913,6 +945,15 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .slot .st{font-size:12px;color:var(--text-secondary)}
 .slot .st.on{color:var(--good)}
 .slot .warn{font-size:11px;color:var(--warn);margin:6px 0 0}
+.mtag{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn);
+  border:1px solid var(--warn);padding:0 4px;margin-left:4px}
+.manrow{display:flex;gap:5px;margin-top:8px}
+.manrow input{width:100%;min-width:0;font-family:"IBM Plex Mono",monospace;font-size:12px;
+  background:var(--bg);color:var(--text-primary);border:1px solid var(--rule);padding:3px 6px}
+.manrow button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11px;
+  background:var(--surface-1);color:var(--text-secondary);border:1px solid var(--rule);
+  padding:3px 8px;cursor:pointer;white-space:nowrap}
+.manrow button:hover{border-color:var(--text-secondary)}
 .flist{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
 .frow{background:var(--surface-1);padding:9px 13px;display:flex;justify-content:space-between;
   gap:14px;align-items:baseline}
@@ -924,6 +965,11 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .frow .fn{font-size:13px;word-break:break-all}
 .frow .fm{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
   white-space:nowrap;font-variant-numeric:tabular-nums}
+.startbtn{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
+  background:var(--surface-1);color:var(--text-primary);border:1px solid var(--rule);
+  padding:5px 11px;cursor:pointer;white-space:nowrap}
+.startbtn:hover:not(:disabled){border-color:var(--series-1)}
+.startbtn:disabled{opacity:.35;cursor:not-allowed}
 #console{margin-top:20px}
 #conwrap{background:var(--bg);border:1px solid var(--rule);height:300px;overflow-y:auto;
   padding:10px 12px;font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.55}
@@ -1065,6 +1111,9 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
 
 <div class="card" id="files">
   <h2>Stored prints</h2>
+  <p class="note" style="margin:-6px 0 12px" id="filesnote">Start runs the file
+  immediately on the printer. It is refused while a print is running or Klipper is
+  not ready.</p>
   <div class="flist" id="flist"></div>
 </div>
 
@@ -1857,7 +1906,13 @@ fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
     });
   }
   CONTROL_ON = !!c.control;
-  if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; loadCamCtls(); }
+  if(CONTROL_ON){
+    el("controls").hidden = false; el("lightrow").hidden = false; loadCamCtls();
+    // Both lists render before this fetch resolves, and both gain a control
+    // once it does - Start on the stored prints, the manual level on each CFS
+    // slot - so they have to be drawn again rather than waiting for a tick.
+    tickFiles(); loadManual().then(tickCfs);
+  }
 }).catch(()=>{});
 document.getElementById("grant")?.addEventListener("click", requestAccess);
 showPermState();
@@ -1909,6 +1964,14 @@ setInterval(()=>{ if(misses === 0) tickTemps(); }, 30000);
 // only place those codes are spelled out is same_material, so build the lookup
 // from there rather than hardcoding a table that would rot.
 const SLOTLBL = ["A", "B", "C", "D"];
+// Manual filament levels live in this dashboard, not on the printer.
+let CFS_MANUAL = {};
+async function loadManual(){
+  try{
+    const r = await fetch(PROXY + "/api/cfs/manual", {cache: "no-store"});
+    if(r.ok) CFS_MANUAL = (await r.json()).slots || {};
+  }catch(e){ /* the slots just show the printer's own figure */ }
+}
 function colourOf(v){
   // "0FFFFFF" - a leading flag digit then six hex digits.
   const h = String(v || "").slice(-6);
@@ -1933,17 +1996,45 @@ async function tickCfs(){
       const mat = (box.material_type || [])[i];
       const rem = parseInt((box.remain_len || [])[i], 10);
       const has = mat && mat !== "-1";
+      const slot = "T1" + SLOTLBL[i];
+      // A manual figure wins the display outright. The printer keeps using its
+      // own for runout and auto-refill either way - this is a note to yourself,
+      // not a correction sent to the machine, so it says which it is showing.
+      const man = CFS_MANUAL[slot];
+      const shown = (man != null) ? man : rem;
       const d = document.createElement("div");
       d.className = "slot" + (has ? "" : " empty");
       d.innerHTML =
-        `<p class="lbl">Slot ${i + 1} &middot; T1${SLOTLBL[i]}</p>` +
+        `<p class="lbl">Slot ${i + 1} &middot; ${slot}</p>` +
         `<div class="mat"><span class="swatch" style="background:${
           has ? colourOf((box.color_value || [])[i]) : "transparent"}"></span>` +
         `<span>${has ? (names[mat] || mat) : "empty"}</span></div>` +
-        (has && !isNaN(rem)
-          ? `<div class="rem"><i style="width:${Math.max(0, Math.min(100, rem))}%"></i></div>` +
-            `<p class="pct">${rem}% remaining</p>`
+        (has && !isNaN(shown)
+          ? `<div class="rem"><i style="width:${Math.max(0, Math.min(100, shown))}%"></i></div>` +
+            `<p class="pct">${shown}% remaining` +
+            (man != null ? ` <span class="mtag">manual</span>` : "") + `</p>`
           : `<p class="pct">&mdash;</p>`);
+
+      if(CONTROL_ON && has){
+        const edit = document.createElement("div");
+        edit.className = "manrow";
+        edit.innerHTML = `<input type="number" min="0" max="100" step="1" ` +
+          `placeholder="${isNaN(rem) ? "—" : rem}" value="${man != null ? man : ""}" ` +
+          `aria-label="manual percent for ${slot}"><button>set</button>` +
+          (man != null ? `<button class="clr">clear</button>` : "");
+        const inp = edit.querySelector("input");
+        const setit = async (v) => {
+          const j = await send("cfs_manual", JSON.stringify({slot, percent: v}));
+          if(j){ CFS_MANUAL = j.slots || {}; tickCfs(); }
+        };
+        edit.querySelector("button").onclick = () => setit(inp.value === "" ? null : inp.value);
+        // Empty is how you say "go back to the printer's number", so Enter on an
+        // empty box has to clear rather than do nothing.
+        inp.onkeydown = ev => { if(ev.key === "Enter") setit(inp.value === "" ? null : inp.value); };
+        const clr = edit.querySelector(".clr");
+        if(clr) clr.onclick = () => setit(null);
+        d.appendChild(edit);
+      }
       wrap.appendChild(d);
     }
 
@@ -2009,8 +2100,25 @@ async function tickFiles(){
       d.innerHTML =
         `<img class="thumb" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` +
         `<span class="meta"><span class="fn"></span><span class="fm">${
-          (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span></span>`;
+          (f.size / 1048576).toFixed(1)} MB &middot; ${when}</span></span>` +
+        (CONTROL_ON ? `<button class="startbtn">Start</button>` : "");
       d.querySelector(".fn").textContent = f.path;   // filenames are user data
+      // Same call Re-run makes. The server does the real checking - klipper
+      // ready, nothing already printing - so this only has to ask first and
+      // report back what it said.
+      const sb = d.querySelector(".startbtn");
+      if(sb) sb.onclick = async () => {
+        if(!confirm(`Start this print now?\n\n${f.path}\n\nThe printer will begin immediately.`)) return;
+        sb.disabled = true; sb.textContent = "starting...";
+        try{
+          await alertsPost("start", {filename: f.path});
+          sb.textContent = "started";
+          el("filesnote").textContent = "Started " + f.path;
+        }catch(e){
+          sb.textContent = "Start"; sb.disabled = false;
+          el("filesnote").textContent = String(e.message || e);
+        }
+      };
       d.querySelector(".thumb").src =
         PROXY + "/api/thumb?file=" + encodeURIComponent(f.path);
       // Estimated time is parsed from the file, so fetch it per row rather than
@@ -2031,7 +2139,9 @@ async function tickFiles(){
     collapse(wrap, 3, "files");
   }catch(e){ /* as above */ }
 }
-tickCfs(); tickFiles();
+// Overrides first, so the slots never paint the printer's figure and then
+// visibly swap to yours a moment later.
+loadManual().then(tickCfs); tickFiles();
 setInterval(tickCfs, 15000);
 setInterval(tickFiles, 60000);
 
@@ -2371,6 +2481,25 @@ class H(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     return self._json(400, {"error": f"reset failed: {e}"})
 
+            if action == "cfs_manual":
+                b = json.loads(raw or b"{}")
+                slot = b.get("slot")
+                if slot not in CFS_SLOTS:
+                    return self._json(400, {"error": f"unknown slot {slot!r}"})
+                pct = b.get("percent")
+                slots = load_manual()
+                if pct is None or pct == "":
+                    slots.pop(slot, None)          # cleared - fall back to the printer
+                else:
+                    try:
+                        v = int(pct)
+                    except (TypeError, ValueError):
+                        return self._json(400, {"error": "percent must be a whole number"})
+                    if not (0 <= v <= 100):
+                        return self._json(400, {"error": f"percent must be 0..100, got {v}"})
+                    slots[slot] = v
+                return self._json(200, {"ok": True, "slots": save_manual(slots)})
+
             if action == "light":
                 # output_pin LED is PWM with scale 1.0, so this is 0..1 and not
                 # the 0..255 the pin's name suggests.
@@ -2587,6 +2716,9 @@ class H(http.server.BaseHTTPRequestHandler):
             # deploy", and costs a confusing round of head-scratching
             self.send_header("Cache-Control", "no-store, must-revalidate")
             self.end_headers(); self.wfile.write(body); return
+        if self.path == "/api/cfs/manual":
+            return self._json(200, {"slots": load_manual()})
+
         if self.path == "/api/camera/controls":
             if not CONTROL or not ROOT_PASS:
                 return self._json(200, {"controls": []})
