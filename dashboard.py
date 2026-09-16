@@ -1000,9 +1000,9 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
       </details>
     </div>
     <details class="card cam2" id="cam2card" style="padding:0" hidden>
-      <summary class="cam2sum"><span class="c2lbl">Shop camera</span>
+      <summary class="cam2sum"><span class="c2lbl">ESP-32 CAM</span>
         <span class="mage" id="cam2st">off</span></summary>
-      <div class="camwrap" id="cam2wrap"><img class="cam" id="cam2" alt="shop camera"
+      <div class="camwrap" id="cam2wrap"><img class="cam" id="cam2" alt="ESP-32 CAM"
              tabindex="0" title="click to zoom · wheel to adjust · Esc to reset">
         <span class="camz" id="cam2zoom" hidden></span></div>
     </details>
@@ -1557,7 +1557,7 @@ connectCam();
    zoomed view is still live rather than a frozen crop. */
 const ZOOM_MAX = 8;
 /* Bound per feed rather than written twice. Each camera keeps its own zoom
-   level and origin in this closure, so zooming the shop camera does not move
+   level and origin in this closure, so zooming the ESP-32 CAM does not move
    the printer one. */
 function bindZoom(imgId, wrapId, tagId){
   const img = el(imgId), wrap = el(wrapId), tag = el(tagId);
@@ -1594,7 +1594,7 @@ function bindZoom(imgId, wrapId, tagId){
 }
 bindZoom("cam", "camwrap", "camzoom");
 
-/* The shop camera is an ESP32 serving MJPEG straight off the LAN - no relay,
+/* The ESP-32 CAM serves MJPEG straight off the LAN - no relay,
    no WebRTC, nothing to negotiate. It is proxied only because this page is
    HTTPS and the camera is not. */
 let cam2Retry = null, cam2Wait = 2000;
