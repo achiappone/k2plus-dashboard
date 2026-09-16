@@ -619,7 +619,15 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
   padding:5px 12px;cursor:pointer}
 .camfoot button:hover{border-color:var(--text-secondary)}
 .camfoot button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
-.camwrap{background:#000;border:1px solid var(--rule)}
+.camwrap{background:#000;border:1px solid var(--rule);position:relative;overflow:hidden}
+/* Digital zoom, done entirely in CSS on frames already on screen. The relay
+   sends full 1920x1080 JPEGs, so there is detail to magnify without asking the
+   printer or the relay for anything. */
+.cam{cursor:zoom-in;transition:transform .12s ease-out}
+.camwrap.zoomed .cam{cursor:zoom-out}
+.camz{position:absolute;top:8px;right:8px;font-family:"IBM Plex Mono",monospace;
+  font-size:11px;background:rgba(10,15,22,.78);border:1px solid var(--rule);
+  color:var(--text-primary);padding:2px 7px;pointer-events:none}
 .camnote{border:1px solid var(--crit);border-top:0;background:rgba(224,122,114,.08);
   padding:11px 13px;font-size:13px;line-height:1.5}
 .camnote b{display:block;font-weight:600;color:var(--crit);margin-bottom:4px}
@@ -789,7 +797,9 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
     </div>
   <div class="camcol">
     <div class="card" id="camcard" style="padding:0">
-      <div class="camwrap"><img class="cam" id="cam" alt="printer camera"></div>
+      <div class="camwrap" id="camwrap"><img class="cam" id="cam" alt="printer camera"
+             tabindex="0" title="click to zoom · wheel to adjust · Esc to reset">
+        <span class="camz" id="camzoom" hidden></span></div>
       <div class="camnote" id="camnote" hidden>
         <b id="camcause">—</b>
         <p id="camdetail"></p>
@@ -1339,6 +1349,44 @@ function connectCam(){
   img.src = CAM + "/camera/stream?t=" + Date.now();   // cache-bust to force a restart
 }
 connectCam();
+
+/* Click a spot to magnify it, click again to come back. transform-origin is set
+   from where you clicked, so the thing you were looking at stays under the
+   cursor instead of the zoom pulling towards the middle.
+   Nothing here touches the stream: the <img> keeps updating underneath, so a
+   zoomed view is still live rather than a frozen crop. */
+const ZOOM_MAX = 8;
+let camZoom = 1, camOX = 50, camOY = 50;
+function applyZoom(){
+  const img = el("cam"), tag = el("camzoom");
+  img.style.transformOrigin = camOX + "% " + camOY + "%";
+  img.style.transform = camZoom > 1 ? "scale(" + camZoom + ")" : "";
+  el("camwrap").classList.toggle("zoomed", camZoom > 1);
+  tag.textContent = camZoom.toFixed(1) + "\u00d7";
+  tag.hidden = camZoom <= 1;
+}
+function zoomAt(ev, z){
+  const r = el("cam").getBoundingClientRect();
+  camOX = ((ev.clientX - r.left) / r.width) * 100;
+  camOY = ((ev.clientY - r.top) / r.height) * 100;
+  camZoom = Math.min(ZOOM_MAX, Math.max(1, z));
+  applyZoom();
+}
+el("cam").onclick = ev => { if(camZoom > 1){ camZoom = 1; applyZoom(); } else zoomAt(ev, 3); };
+el("cam").onwheel = ev => {
+  // Only capture the wheel once zoomed in. Otherwise scrolling past the camera
+  // on the way down the page would trap the scroll.
+  if(camZoom <= 1) return;
+  ev.preventDefault();
+  zoomAt(ev, camZoom + (ev.deltaY < 0 ? 0.5 : -0.5));
+};
+el("cam").onkeydown = ev => {
+  if(ev.key === "Escape" && camZoom > 1){ camZoom = 1; applyZoom(); }
+  if(ev.key === "Enter" || ev.key === " "){
+    ev.preventDefault();
+    camZoom = camZoom > 1 ? 1 : 3; camOX = camOY = 50; applyZoom();
+  }
+};
 
 // ---- controls -------------------------------------------------------------
 // Every write carries X-K2-Token. That header is what makes this safe to leave
