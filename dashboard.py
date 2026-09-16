@@ -628,7 +628,6 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
      cards themselves to flex items so they can be interleaved. Without it the
      camera could only ever sit after the whole left-hand column. */
   .grid{grid-template-columns:1fr;display:flex;flex-direction:column;gap:20px}
-  .row2{grid-template-columns:1fr}
   .grid > div, .camcol{display:contents}
   .grid .card{order:3}
   .grid #progresscard{order:1}
@@ -685,6 +684,14 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;margin-top:20px}
 .row2>*{min-width:0}
 .row2>.card{margin-top:0}
+/* This has to sit AFTER the rule above, not up in the main 900px block with the
+   rest of the mobile layout. Both selectors are a single class, so the later
+   one wins whatever the media query says - stated up there it lost at every
+   width and the two cards stayed side by side on a phone. */
+@media(max-width:900px){
+  .row2{grid-template-columns:1fr;gap:20px}
+  .row2>.card+.card{margin-top:0}
+}
 .h1sub{font-weight:400;color:var(--text-muted);font-size:.62em;letter-spacing:0}
 table.th{border-collapse:collapse;width:100%;font-size:15px}
 table.th th{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--text-muted);
@@ -696,6 +703,13 @@ table.th .n,table.th th.n{text-align:right;font-family:"IBM Plex Mono",monospace
 table.th td.n.pw{width:76px}  table.th td.n.ch{width:104px}
 table.th td.n.act{width:104px} table.th td:first-child{width:auto}
 table.th{table-layout:fixed}
+/* The fixed column widths above total about 400px, which is wider than a phone
+   can give this card. table-layout:fixed does not shrink them - it overlaps
+   them, so power was printing on top of the sensor name. Let the wrapper scroll
+   instead, and give the table a floor so the fixed widths always have room.
+   Both are no-ops on a desktop, where there is more width than the minimum. */
+.tw{overflow-x:auto}
+table.th{min-width:430px}
 table.th th.tgt{text-align:left;width:118px}
 .nm{display:flex;align-items:center;gap:9px;font-weight:450}
 .swatch{width:10px;height:10px;flex:none;border-radius:2px}
