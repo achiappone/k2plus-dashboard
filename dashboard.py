@@ -489,7 +489,7 @@ h1{font-size:26px;margin:0;letter-spacing:-.01em}
 /* Just the progress card and the camera now. Everything else is full width,
    like the CFS card - a chart squeezed into 55% of the page was the reason
    the sensor traces were unreadable in the first place. */
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;position:relative;
+.grid{display:grid;grid-template-columns:35fr 65fr;gap:20px;position:relative;
   align-items:stretch;margin-bottom:20px}
 /* The camera has a fixed 16/9 shape - cam_app captures 1920x1080 and the relay
    re-serves it untouched - so it sets the row height and the progress
