@@ -49,6 +49,77 @@ CAMERA_SIGNAL = f"http://{PRINTER}:8000/call/webrtc_local"
 # printer encodes for one consumer no matter how many people are watching.
 CAM_RELAY = os.environ.get("K2_CAM_RELAY", "http://127.0.0.1:8771")
 
+# A second, independent camera - an ESP32-CAM serving plain MJPEG on the LAN.
+# Proxied for the same reason the printer's feed is: this page is served over
+# HTTPS through a tunnel, and a browser refuses to load an http:// image into
+# an https:// page no matter whose network it is on. Unset means there is no
+# second camera and the panel never appears.
+CAM2 = os.environ.get("K2_CAM2", "").rstrip("/")
+
+# One upstream connection, however many viewers.
+#
+# An ESP32-CAM serves exactly ONE stream at a time. Measured on 2026-09-16:
+# of three concurrent requests to /stream, one received 983 kB and the other
+# two received nothing at all. Proxying per viewer would therefore mean the
+# second person to open this page gets a blank panel - and possibly starves
+# the first. So the frames are read once here and fanned out, which is the
+# same bargain the WebRTC relay makes with the printer.
+#
+# Frames, not bytes: a slow viewer has to be allowed to miss something, and
+# missing a whole frame is invisible while missing a chunk of one corrupts
+# everything after it.
+CAM2_BOUND = b"k2frame"
+_cam2 = {"jpeg": None, "seq": 0, "viewers": 0, "reader": None,
+         "cond": threading.Condition()}
+
+
+def _cam2_publish(frame):
+    with _cam2["cond"]:
+        _cam2["jpeg"] = frame
+        _cam2["seq"] += 1
+        _cam2["cond"].notify_all()
+
+
+def cam2_split(buf, sink):
+    """Pull whole JPEGs out of an MJPEG byte stream; return what is left over.
+
+    Framed on the JPEG markers themselves (FFD8 start, FFD9 end) rather than on
+    the multipart boundary, because the boundary string is the camera's choice
+    and this then does not care what it picked.
+    """
+    while True:
+        i = buf.find(b"\xff\xd8")
+        if i < 0:
+            break
+        j = buf.find(b"\xff\xd9", i + 2)
+        if j < 0:
+            buf = buf[i:]                 # keep the partial frame, drop preamble
+            break
+        sink(buf[i:j + 2])
+        buf = buf[j + 2:]
+    # A stream that never yields a complete frame must not grow without bound.
+    return b"" if len(buf) > 4_000_000 else buf
+
+
+def _cam2_reader():
+    buf = b""
+    try:
+        with urllib.request.urlopen(CAM2 + "/stream", timeout=15) as r:
+            while _cam2["viewers"] > 0:
+                chunk = r.read(8192)
+                if not chunk:
+                    break
+                buf = cam2_split(buf + chunk, _cam2_publish)
+    except Exception:
+        pass
+    finally:
+        # Wake everyone so they can notice the source has gone, rather than
+        # sitting on a condition that will never be signalled again.
+        with _cam2["cond"]:
+            _cam2["reader"] = None
+            _cam2["seq"] += 1
+            _cam2["cond"].notify_all()
+
 def printer_ssh(cmd, timeout=30):
     """Run one command on the printer over its own sshd.
 
@@ -675,6 +746,8 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
    printer or the relay for anything. */
 .cam{cursor:zoom-in;transition:transform .12s ease-out}
 .camwrap.zoomed .cam{cursor:zoom-out}
+#cam2card{margin-top:20px;flex:none}
+.c2lbl{letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
 .cammet{display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 14px;
   border-top:1px solid var(--rule);font-family:"IBM Plex Mono",monospace;
   font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums}
@@ -903,6 +976,13 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
           <span class="msg" id="camctlmsg"></span>
         </div>
       </details>
+    </div>
+    <div class="card" id="cam2card" style="padding:0" hidden>
+      <div class="camwrap" id="cam2wrap"><img class="cam" id="cam2" alt="shop camera"
+             tabindex="0" title="click to zoom · wheel to adjust · Esc to reset">
+        <span class="camz" id="cam2zoom" hidden></span></div>
+      <div class="cammet"><span class="c2lbl">Shop camera</span>
+        <span class="mage" id="cam2st">connecting</span></div>
     </div>
   </div>
 </div>
@@ -1454,37 +1534,59 @@ connectCam();
    Nothing here touches the stream: the <img> keeps updating underneath, so a
    zoomed view is still live rather than a frozen crop. */
 const ZOOM_MAX = 8;
-let camZoom = 1, camOX = 50, camOY = 50;
-function applyZoom(){
-  const img = el("cam"), tag = el("camzoom");
-  img.style.transformOrigin = camOX + "% " + camOY + "%";
-  img.style.transform = camZoom > 1 ? "scale(" + camZoom + ")" : "";
-  el("camwrap").classList.toggle("zoomed", camZoom > 1);
-  tag.textContent = camZoom.toFixed(1) + "\u00d7";
-  tag.hidden = camZoom <= 1;
-}
-function zoomAt(ev, z){
-  const r = el("cam").getBoundingClientRect();
-  camOX = ((ev.clientX - r.left) / r.width) * 100;
-  camOY = ((ev.clientY - r.top) / r.height) * 100;
-  camZoom = Math.min(ZOOM_MAX, Math.max(1, z));
-  applyZoom();
-}
-el("cam").onclick = ev => { if(camZoom > 1){ camZoom = 1; applyZoom(); } else zoomAt(ev, 3); };
-el("cam").onwheel = ev => {
-  // Only capture the wheel once zoomed in. Otherwise scrolling past the camera
-  // on the way down the page would trap the scroll.
-  if(camZoom <= 1) return;
-  ev.preventDefault();
-  zoomAt(ev, camZoom + (ev.deltaY < 0 ? 0.5 : -0.5));
-};
-el("cam").onkeydown = ev => {
-  if(ev.key === "Escape" && camZoom > 1){ camZoom = 1; applyZoom(); }
-  if(ev.key === "Enter" || ev.key === " "){
-    ev.preventDefault();
-    camZoom = camZoom > 1 ? 1 : 3; camOX = camOY = 50; applyZoom();
+/* Bound per feed rather than written twice. Each camera keeps its own zoom
+   level and origin in this closure, so zooming the shop camera does not move
+   the printer one. */
+function bindZoom(imgId, wrapId, tagId){
+  const img = el(imgId), wrap = el(wrapId), tag = el(tagId);
+  let z = 1, ox = 50, oy = 50;
+  function apply(){
+    img.style.transformOrigin = ox + "% " + oy + "%";
+    img.style.transform = z > 1 ? "scale(" + z + ")" : "";
+    wrap.classList.toggle("zoomed", z > 1);
+    tag.textContent = z.toFixed(1) + "\u00d7";
+    tag.hidden = z <= 1;
   }
-};
+  function at(ev, nz){
+    const r = img.getBoundingClientRect();
+    ox = ((ev.clientX - r.left) / r.width) * 100;
+    oy = ((ev.clientY - r.top) / r.height) * 100;
+    z = Math.min(ZOOM_MAX, Math.max(1, nz));
+    apply();
+  }
+  img.onclick = ev => { if(z > 1){ z = 1; apply(); } else at(ev, 3); };
+  img.onwheel = ev => {
+    // Only capture the wheel once zoomed in. Otherwise scrolling past the
+    // camera on the way down the page would trap the scroll.
+    if(z <= 1) return;
+    ev.preventDefault();
+    at(ev, z + (ev.deltaY < 0 ? 0.5 : -0.5));
+  };
+  img.onkeydown = ev => {
+    if(ev.key === "Escape" && z > 1){ z = 1; apply(); }
+    if(ev.key === "Enter" || ev.key === " "){
+      ev.preventDefault();
+      z = z > 1 ? 1 : 3; ox = oy = 50; apply();
+    }
+  };
+}
+bindZoom("cam", "camwrap", "camzoom");
+
+/* The shop camera is an ESP32 serving MJPEG straight off the LAN - no relay,
+   no WebRTC, nothing to negotiate. It is proxied only because this page is
+   HTTPS and the camera is not. */
+let cam2Retry = null, cam2Wait = 2000;
+function connectCam2(){
+  clearTimeout(cam2Retry);
+  const img = el("cam2");
+  img.onload  = () => { cam2Wait = 2000; el("cam2st").textContent = "live"; };
+  img.onerror = () => {
+    el("cam2st").textContent = "not reachable";
+    cam2Retry = setTimeout(connectCam2, cam2Wait);
+    cam2Wait = Math.min(cam2Wait * 2, 30000);
+  };
+  img.src = PROXY + "/camera2/stream?t=" + Date.now();
+}
 
 // ---- controls -------------------------------------------------------------
 // Every write carries X-K2-Token. That header is what makes this safe to leave
@@ -1675,6 +1777,11 @@ get("info").then(i=>{
 }).catch(()=>{});
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
+  if(c.cam2){
+    el("cam2card").hidden = false;
+    bindZoom("cam2", "cam2wrap", "cam2zoom");
+    connectCam2();
+  }
   CONTROL_ON = !!c.control;
   if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; loadCamCtls(); }
 }).catch(()=>{});
@@ -2302,15 +2409,52 @@ class H(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             return self._json(502, {"error": str(e)})
 
-    def _camera_proxy(self):
-        """Stream the relay through, chunk by chunk.
+    def _camera2_proxy(self):
+        """Serve the shared shop-camera frames as this server's own MJPEG."""
+        with _cam2["cond"]:
+            _cam2["viewers"] += 1
+            if _cam2["reader"] is None:
+                _cam2["reader"] = threading.Thread(target=_cam2_reader, daemon=True)
+                _cam2["reader"].start()
+            seq = _cam2["seq"]
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "multipart/x-mixed-replace; boundary=" + CAM2_BOUND.decode())
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            while True:
+                with _cam2["cond"]:
+                    if not _cam2["cond"].wait_for(lambda: _cam2["seq"] != seq, timeout=20):
+                        break                      # nothing for 20s - camera is gone
+                    seq, frame = _cam2["seq"], _cam2["jpeg"]
+                    dead = _cam2["reader"] is None
+                if frame:
+                    self.wfile.write(b"--" + CAM2_BOUND +
+                                     b"\r\nContent-Type: image/jpeg\r\nContent-Length: " +
+                                     str(len(frame)).encode() + b"\r\n\r\n" + frame + b"\r\n")
+                if dead:
+                    break
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception:
+            pass
+        finally:
+            with _cam2["cond"]:
+                _cam2["viewers"] -= 1
+
+    def _camera_proxy(self, upstream=None):
+        """Stream an MJPEG source through, chunk by chunk.
 
         MJPEG never ends, so this loop runs for as long as the viewer watches -
         which is only safe because the server is threaded. A viewer closing the
         tab surfaces as a broken pipe, which is expected, not an error.
+
+        Used for both cameras: the relay, and the ESP32 direct. They differ only
+        in where the bytes come from.
         """
         try:
-            with urllib.request.urlopen(CAM_RELAY + self.path, timeout=15) as r:
+            with urllib.request.urlopen(upstream or (CAM_RELAY + self.path), timeout=15) as r:
                 self.send_response(200)
                 self.send_header("Content-Type",
                                  r.headers.get("Content-Type", "application/octet-stream"))
@@ -2402,10 +2546,17 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/capabilities":
             # says WHETHER control is on. Never the token.
             self._json(200, {"control": CONTROL,
+                             "cam2": bool(CAM2),
                              "limits": LIMITS if CONTROL else {}})
             return
         if self.path.startswith("/camera/"):
             return self._camera_proxy()
+        if self.path.startswith("/camera2/"):
+            if not CAM2:
+                return self._json(404, {"error": "no second camera configured"})
+            # Only the stream, and only ever the path this server chooses. The
+            # viewer never gets to say what gets fetched from the LAN.
+            return self._camera2_proxy()
         if self.path == "/api/alerts":
             # Token gated: the saved addresses are personal data, and every other
             # read on this server is open.
