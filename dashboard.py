@@ -538,9 +538,14 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
 .hero .sub{font-size:13px;color:var(--text-secondary);padding-bottom:7px}
 .bar{height:7px;background:var(--rule-2);margin:14px 0 4px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--series-1);transition:width .6s}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+/* 78px, not 112px. These four values are short - "5.01 mm", "100%" - and the
+   old floor made them demand more width than they carry, which is what pushed
+   the progress card wider than the camera beside it. */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));
   gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:12px}
-.tile{background:var(--surface-1);padding:6px 11px}
+.tile{background:var(--surface-1);padding:5px 8px}
+.tile .k{font-size:9px;letter-spacing:.08em}
+.tile .v{font-size:13px}
 .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);margin:0 0 1px}
 .v{font-size:15px;font-weight:500;line-height:1.15}
 .small{font-size:12px;color:var(--text-muted)}
@@ -609,15 +614,21 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .camnote b{display:block;font-weight:600;color:var(--crit);margin-bottom:4px}
 .camnote p{margin:0 0 6px;color:var(--text-secondary)}
 .camnote p:last-child{margin:0}
-.lightrow{display:flex;align-items:center;gap:10px;margin-top:14px}
-.lightrow button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
-  background:transparent;color:var(--text-secondary);border:1px solid var(--rule);
-  padding:6px 11px;cursor:pointer}
-.lightrow button:hover{border-color:var(--text-secondary)}
-.lightrow button:focus-visible{outline:2px solid var(--series-1);outline-offset:2px}
-.lightrow button[aria-pressed="true"]{border-color:var(--series-1);color:var(--text)}
+.lightrow{display:flex;align-items:center;gap:9px;margin-top:14px}
 .lightrow .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--text-muted)}
+  color:var(--text-muted);margin:0;cursor:pointer}
+.lightst{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--text-muted)}
+/* The switch is a real checkbox with the box hidden and a track drawn in its
+   place, so tab, space and every screen reader still treat it as a control. */
+.sw{position:relative;display:inline-block;width:34px;height:18px;flex:none}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.sl{position:absolute;inset:0;background:var(--surface-1);border:1px solid var(--rule);
+  border-radius:999px;transition:background .15s,border-color .15s;pointer-events:none}
+.sl::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;
+  border-radius:50%;background:var(--text-muted);transition:transform .15s,background .15s}
+.sw input:checked + .sl{background:var(--series-1);border-color:var(--series-1)}
+.sw input:checked + .sl::after{transform:translateX(16px);background:#fff}
+.sw input:focus-visible + .sl{outline:2px solid var(--series-1);outline-offset:2px}
 .note{font-size:12px;color:var(--text-muted);margin-top:10px}
 /* Controls sit inside the progress card now, so the heading drops a level and
    a divider does the job the card border used to. */
@@ -738,8 +749,10 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
       <div class="lightrow" id="lightrow" hidden>
-        <button id="b-light" aria-pressed="false">Chamber light</button>
-        <span class="k" id="lighttx">off</span>
+        <label class="sw"><input type="checkbox" id="b-light" role="switch">
+          <span class="sl"></span></label>
+        <label class="k" for="b-light">Chamber light</label>
+        <span class="lightst" id="lighttx">off</span>
       </div>
       <div class="ctl" id="controls" hidden>
         <h3 class="ctlh">Controls</h3>
@@ -1231,6 +1244,9 @@ async function tick(){
       if(o.target>0 && Math.abs(o.temperature-o.target)>8) dev=true;
     });
     const st=ps.state||"—";
+    /* Nothing to cancel when nothing is running, and an live-looking Cancel on
+       an idle printer is a button that can only disappoint or misfire. */
+    el("b-cancel").disabled = !(st === "printing" || st === "paused");
     el("statetx").textContent = st + (dev?" · temp off target":"");
     el("state").style.color = statusColor(st, dev);
   }catch(e){
@@ -1333,13 +1349,15 @@ async function send(action, body, extra){
 let lightOn = false;
 function paintLight(v){
   lightOn = v > 0;
-  el("b-light").setAttribute("aria-pressed", lightOn ? "true" : "false");
+  el("b-light").checked = lightOn;
   el("lighttx").textContent = lightOn ? "on" : "off";
 }
-el("b-light").onclick = async () => {
-  const want = !lightOn;
+el("b-light").onchange = async (ev) => {
+  const want = ev.target.checked;
   const j = await send("light", JSON.stringify({on: want}));
-  if(j){ paintLight(want ? 1 : 0); msg("light " + (want ? "on" : "off"), "ok"); }
+  // Put the switch back if the printer refused; it must not sit showing a state
+  // the printer is not in.
+  if(j) paintLight(want ? 1 : 0); else paintLight(lightOn ? 1 : 0);
 };
 async function home(axes, label){
   const j = await send("home", JSON.stringify({axes}));
