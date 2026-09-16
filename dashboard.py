@@ -761,6 +761,14 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .cam{cursor:zoom-in;transition:transform .12s ease-out}
 .camwrap.zoomed .cam{cursor:zoom-out}
 #cam2card{margin-top:20px;flex:none}
+.cam2sum{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--text-muted)}
+.cam2sum .mage{margin-left:auto}
+.cam2sum:focus-visible{outline:2px solid var(--series-1);outline-offset:-2px}
+/* details resets this to a marker box; keep the row layout. */
+.cam2sum::-webkit-details-marker{display:none}
+.cam2sum::before{content:"+";font-weight:600;color:var(--text-secondary)}
+.cam2[open] .cam2sum::before{content:"\u2212"}
 .c2lbl{letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
 .cammet{display:flex;flex-wrap:wrap;gap:4px 16px;padding:8px 14px;
   border-top:1px solid var(--rule);font-family:"IBM Plex Mono",monospace;
@@ -991,13 +999,13 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
         </div>
       </details>
     </div>
-    <div class="card" id="cam2card" style="padding:0" hidden>
+    <details class="card cam2" id="cam2card" style="padding:0" hidden>
+      <summary class="cam2sum"><span class="c2lbl">Shop camera</span>
+        <span class="mage" id="cam2st">off</span></summary>
       <div class="camwrap" id="cam2wrap"><img class="cam" id="cam2" alt="shop camera"
              tabindex="0" title="click to zoom · wheel to adjust · Esc to reset">
         <span class="camz" id="cam2zoom" hidden></span></div>
-      <div class="cammet"><span class="c2lbl">Shop camera</span>
-        <span class="mage" id="cam2st">connecting</span></div>
-    </div>
+    </details>
   </div>
 </div>
 
@@ -1590,6 +1598,20 @@ bindZoom("cam", "camwrap", "camzoom");
    no WebRTC, nothing to negotiate. It is proxied only because this page is
    HTTPS and the camera is not. */
 let cam2Retry = null, cam2Wait = 2000;
+
+/* Collapsed by default, and collapsed means DISCONNECTED - not just hidden.
+   The camera serves one stream at a time and this page fans it out, so a panel
+   nobody is looking at would still hold that single connection open and keep
+   the ESP32 encoding for an audience of nobody. Dropping the src is what
+   actually ends the request. */
+function stopCam2(){
+  clearTimeout(cam2Retry);
+  cam2Wait = 2000;
+  const img = el("cam2");
+  img.onload = null; img.onerror = null;
+  img.removeAttribute("src");
+  el("cam2st").textContent = "off";
+}
 function connectCam2(){
   clearTimeout(cam2Retry);
   const img = el("cam2");
@@ -1792,9 +1814,12 @@ get("info").then(i=>{
 // only reveal the panel if this proxy actually has control enabled
 fetch(PROXY+"/api/capabilities").then(r=>r.json()).then(c=>{
   if(c.cam2){
+    // Shown, but shut. Opening it is what starts the stream.
     el("cam2card").hidden = false;
     bindZoom("cam2", "cam2wrap", "cam2zoom");
-    connectCam2();
+    el("cam2card").addEventListener("toggle", () => {
+      if(el("cam2card").open) connectCam2(); else stopCam2();
+    });
   }
   CONTROL_ON = !!c.control;
   if(CONTROL_ON){ el("controls").hidden = false; el("lightrow").hidden = false; loadCamCtls(); }
