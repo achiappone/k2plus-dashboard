@@ -551,7 +551,7 @@ def gcode_meta(name):
     """
     if name in META_CACHE:
         return META_CACHE[name]
-    out = {"png": None, "minutes": None}
+    out = {"png": None, "minutes": None, "grams": None, "mm": None}
     try:
         url = MOONRAKER + "/server/files/gcodes/" + urllib.parse.quote(name)
         req = urllib.request.Request(url, headers={"Range": f"bytes=0-{THUMB_BYTES}"})
@@ -561,10 +561,43 @@ def gcode_meta(name):
         m = re.search(rb"^M73 P\d+ R(\d+)", data, re.M)
         if m:
             out["minutes"] = int(m.group(1))
+        out["grams"] = filament_total(data, b"g")
+        out["mm"] = filament_total(data, b"mm")
+        if out["grams"] is None:
+            # Some slicers put the totals at the END instead. Creality Print
+            # writes them in the header; the Orca-style files on this printer
+            # write them after the last layer, ahead of a CONFIG_BLOCK that
+            # runs to tens of kilobytes - so the very tail is not enough, and a
+            # 54 MB file measured needs the last 32 KB. Read 128 KB for margin,
+            # and only when the header did not already answer.
+            req = urllib.request.Request(url, headers={"Range": "bytes=-131072"})
+            with urllib.request.urlopen(req, timeout=25) as r:
+                tail = r.read()
+            out["grams"] = filament_total(tail, b"g")
+            out["mm"] = filament_total(tail, b"mm")
     except Exception:
         pass
     META_CACHE[name] = out          # cache misses too, do not retry every poll
     return out
+
+
+def filament_total(data, unit):
+    """Sum of `; filament used [<unit>] = a, b, c, d`, or None.
+
+    One figure per extruder, so a four-slot CFS job has four - and a
+    single-material one still writes all four with three zeros. Summing is
+    therefore right in both cases, where reading the first would be wrong for
+    any multi-material print.
+    """
+    m = re.search(rb"^; filament used \[" + re.escape(unit) + rb"\] = ([0-9.,\s]+)",
+                  data, re.M)
+    if not m:
+        return None
+    try:
+        vals = [float(x) for x in m.group(1).split(b",") if x.strip()]
+    except ValueError:
+        return None
+    return round(sum(vals), 2) if vals else None
 
 
 def extract_thumbnail(data):
@@ -697,6 +730,8 @@ h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));
   gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:12px}
 .tile{background:var(--surface-1);padding:5px 8px}
+.sub2{font-family:"IBM Plex Mono",monospace;font-size:9px;color:var(--text-muted);
+  margin:1px 0 0;min-height:0}
 .tile .k{font-size:9px;letter-spacing:.08em}
 /* .v is a <p>, so without this it carries the UA default 1em top AND bottom -
    about 13px of dead space under every value, which is what made these cells
@@ -922,6 +957,9 @@ td.tgtcell input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .hrow .hfn{flex:1;min-width:0;font-size:13px;word-break:break-all}
 .hrow .hdur{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--text-muted);
   white-space:nowrap;font-variant-numeric:tabular-nums}
+.hrow .hfil,.frow .ffil{font-family:"IBM Plex Mono",monospace;font-size:12px;
+  color:var(--text-secondary);white-space:nowrap;font-variant-numeric:tabular-nums;
+  min-width:6ch;text-align:right}
 .hrow button{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;
   background:var(--surface-1);color:var(--text-primary);border:1px solid var(--rule);
   padding:5px 11px;cursor:pointer;white-space:nowrap}
@@ -1013,7 +1051,8 @@ details{margin-top:14px}summary{cursor:pointer;font-size:12px;color:var(--text-s
       <div class="small" id="times">—</div>
       <div class="tiles">
         <div class="tile"><p class="k">Z height</p><p class="v" id="z">—</p></div>
-        <div class="tile"><p class="k">Filament</p><p class="v" id="fil">—</p></div>
+        <div class="tile"><p class="k">Filament</p><p class="v" id="fil">—</p>
+          <p class="sub2" id="filest"></p></div>
         <div class="tile"><p class="k">Speed</p><p class="v" id="spd">—</p></div>
         <div class="tile"><p class="k">Flow</p><p class="v" id="flow">—</p></div>
       </div>
@@ -1521,7 +1560,23 @@ async function tick(){
     pushSample(s);
     if(!hovering){ try{ drawChart(); drawSparks(); }catch(e){} }
     el("z").textContent   = (ps.z_pos!=null? ps.z_pos.toFixed(2):"—")+" mm";
-    el("fil").textContent = ((ps.filament_used||0)/1000).toFixed(2)+" m";
+    // Used against required, both in metres so the pair is directly comparable
+    // - the point is how much is still to come, not two unrelated figures.
+    const usedM = (ps.filament_used||0)/1000;
+    const fm = ps.filename ? METACACHE[ps.filename] : null;
+    if(ps.filename && !(ps.filename in METACACHE)) fileMeta(ps.filename);
+    // The tile keeps just the reading. Used-over-required on one line wrapped
+    // in a tile this narrow, which pushed the estimate off screen entirely, so
+    // the requirement goes underneath where there is room for both figures.
+    el("fil").textContent = usedM.toFixed(2) + " m";
+    // Two lines rather than one joined by a separator: the tile is ~90px wide,
+    // so a single line wrapped anyway and left the divider dangling at the end
+    // of the first one. Both values are numbers we formatted, so the markup is
+    // ours and there is nothing here to escape.
+    el("filest").innerHTML = fm
+      ? [fm.mm != null ? "of " + (fm.mm/1000).toFixed(1) + " m" : "",
+         fm.grams != null ? fm.grams.toFixed(0) + " g" : ""].filter(Boolean).join("<br>")
+      : "";
     el("spd").textContent = Math.round((gm.speed||0)/60)+" mm/s";
     el("flow").textContent= Math.round((gm.speed_factor||1)*100)+"%";
 
@@ -2123,16 +2178,16 @@ async function tickFiles(){
         PROXY + "/api/thumb?file=" + encodeURIComponent(f.path);
       // Estimated time is parsed from the file, so fetch it per row rather than
       // blocking the whole list on it. Rows render immediately either way.
-      fetch(PROXY + "/api/meta?file=" + encodeURIComponent(f.path))
-        .then(r => r.ok ? r.json() : null)
-        .then(m => {
-          if(m && m.minutes != null){
-            const h = Math.floor(m.minutes / 60), mm = m.minutes % 60;
-            d.querySelector(".fm").textContent =
-              `${h ? h + "h " + String(mm).padStart(2,"0") + "m" : mm + "m"} · ` +
-              d.querySelector(".fm").textContent;
-          }
-        }).catch(() => {});
+      // Through the shared cache: the same file can appear in Recent jobs and be
+      // the running job, and each miss is a ranged read of it on the printer.
+      fileMeta(f.path).then(m => {
+        if(m && m.minutes != null){
+          const h = Math.floor(m.minutes / 60), mm = m.minutes % 60;
+          d.querySelector(".fm").textContent =
+            `${h ? h + "h " + String(mm).padStart(2,"0") + "m" : mm + "m"} · ` +
+            d.querySelector(".fm").textContent;
+        }
+      });
       wrap.appendChild(d);
     }
     if(!files.length) wrap.innerHTML = '<div class="frow"><span class="fn">no files</span></div>';
@@ -2146,6 +2201,20 @@ setInterval(tickCfs, 15000);
 setInterval(tickFiles, 60000);
 
 // ---- recent jobs ----------------------------------------------------------
+/* Estimated filament per file, from the gcode header. Cached here because the
+   same file appears in both lists and the current job, and each lookup is a
+   ranged read of the file on the printer. */
+const METACACHE = {};
+async function fileMeta(name){
+  if(name in METACACHE) return METACACHE[name];
+  try{
+    const r = await fetch(PROXY + "/api/meta?file=" + encodeURIComponent(name));
+    METACACHE[name] = r.ok ? await r.json() : null;
+  }catch(e){ METACACHE[name] = null; }
+  return METACACHE[name];
+}
+const grams = m => (m && m.grams != null) ? m.grams.toFixed(1) + " g" : "";
+
 function shortDur(sec){
   const m = Math.round((sec || 0) / 60);
   return m >= 60 ? `${Math.floor(m/60)}h ${String(m%60).padStart(2,"0")}m` : `${m}m`;
@@ -2168,8 +2237,13 @@ async function tickHistory(){
         `<span class="hst st-${st}">${st}</span>` +
         `<span class="hfn"></span>` +
         `<span class="hdur">${shortDur(j.total_duration)}</span>` +
+        `<span class="hfil"></span>` +
         `<button${j.exists ? "" : " disabled title='file no longer on the printer'"}>Re-run</button>`;
       d.querySelector(".hfn").textContent = j.filename || "(unknown)";
+      if(j.filename) fileMeta(j.filename).then(m => {
+        const g = grams(m);
+        if(g) d.querySelector(".hfil").textContent = g;
+      });
       const btn = d.querySelector("button");
       if(j.exists){
         btn.onclick = async () => {
@@ -2777,7 +2851,8 @@ class H(http.server.BaseHTTPRequestHandler):
             if not name or ".." in name or name.startswith("/"):
                 self.send_error(400, "bad filename"); return
             m = gcode_meta(name)
-            self._json(200, {"minutes": m["minutes"], "has_thumb": bool(m["png"])})
+            self._json(200, {"minutes": m["minutes"], "has_thumb": bool(m["png"]),
+                             "grams": m["grams"], "mm": m["mm"]})
             return
         if self.path.startswith("/api/thumb?"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
